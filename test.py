@@ -1,4 +1,6 @@
 import cv2 as cv
+import numpy as np
+import time
 
 window_title = "Frame"
 
@@ -41,6 +43,24 @@ def rtext(img, text, org):
     )
 
 
+blueLow = (100, 200, 0)
+blueHigh = (200, 255, 255)
+yellowLow = (0, 200, 0)
+yellowHigh = (80, 255, 190)
+
+# BGR edge fills so Voronoi always has a boundary
+blueFill = (160, 90, 6)
+yellowFill = (30, 170, 170)
+
+img = np.zeros((1024, 1024), np.uint8)
+
+# Fill it with some white pixels
+img[10, 10] = 255
+img[20, 1000] = 255
+img[:, 800:] = 255
+
+morphKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+
 cap = cv.VideoCapture(0)
 if not cap.isOpened():
     print("Cannot open camera")
@@ -49,23 +69,52 @@ if not cap.isOpened():
 while True:
     k = cv.waitKey(1)
 
+    if k == ord("1"):
+        currentlyShowing = -1
+    if k == ord("2"):
+        currentlyShowing = -2
+    if k == ord("3"):
+        currentlyShowing = -3
+    if k == ord("4"):
+        currentlyShowing = -4
+    if k == ord("5"):
+        currentlyShowing = -5
+    if k == ord("6"):
+        currentlyShowing = -6
+    if k == ord("7"):
+        currentlyShowing = -7
+    if k == ord("8"):
+        currentlyShowing = -8
+    if k == ord("9"):
+        currentlyShowing = -9
+    if k == ord("0"):
+        currentlyShowing = -10
     if k == ord("g"):
         currentlyShowing = 0
-    if k == ord("h"):
+    if k == ord("H"):
         currentlyShowing = 1
     if k == ord("s"):
         currentlyShowing = 2
     if k == ord("v"):
         currentlyShowing = 3
-    if k == ord("H"):
+    if k == ord("h"):
         currentlyShowing = 4
 
-    # imgRaw = cv.imread("test.png")
-    ret, rawImg = cap.read()
-    if ret == False:
-        break
+    start_time = time.time()
+    ret = True
+    inputImg = cv.imread("test2.png")
 
-    hsvImg = cv.cvtColor(rawImg, cv.COLOR_BGR2HSV_FULL)
+    # inputImg = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
+    # ret, inputImg = cap.read()
+    # if ret == False:
+    # break
+
+    height, width, channels = inputImg.shape
+    inputImg[:, 0:5] = blueFill
+    inputImg[:, width - 5 : width] = yellowFill
+    # inputImg = cv.flip(inputImg, 1)  # TODO REMOVE ON FINAL
+
+    hsvImg = cv.cvtColor(inputImg, cv.COLOR_BGR2HSV_FULL)
     hsvHueOnly = hsvImg.copy()
     hsvHueOnly[:, :, 1] = 255
     hsvHueOnly[:, :, 2] = 255
@@ -74,24 +123,100 @@ while True:
     hsvValOnly = cv.cvtColor(hsvImg[:, :, 2], cv.COLOR_GRAY2BGR)
 
     # pixel is in BGR!
-    rgbPixel = rawImg[mouseY, mouseX]
+    rgbPixel = inputImg[mouseY, mouseX]
     hsvPixel = hsvImg[mouseY, mouseX]
 
-    showFrame = rawImg
-    txt = "RGB"
-    if currentlyShowing == 1:
-        showFrame = hsvHueOnly
-        txt = "Hue"
-    elif currentlyShowing == 2:
-        showFrame = hsvSatOnly
-        txt = "Sat"
-    elif currentlyShowing == 3:
-        showFrame = hsvValOnly
-        txt = "Val"
-    elif currentlyShowing == 4:
-        showFrame = hsvImg
-        txt = "HSV"
-    showFrame = cv.flip(showFrame, 1)
+    blueThresh = cv.inRange(hsvImg, blueLow, blueHigh)
+    blueThresh = cv.morphologyEx(blueThresh, cv.MORPH_OPEN, morphKernel)
+    yellowThresh = cv.inRange(hsvImg, yellowLow, yellowHigh)
+    yellowThresh = cv.morphologyEx(yellowThresh, cv.MORPH_OPEN, morphKernel)
+    combinedThresh = cv.bitwise_xor(yellowThresh, blueThresh)
+    end_time = time.time()
+
+    blueDist = cv.normalize(
+        cv.distanceTransform(cv.bitwise_not(blueThresh), cv.DIST_L2, 5),
+        None,
+        0,
+        255,
+        cv.NORM_MINMAX,
+        cv.CV_8UC1,
+    )
+    yellowDist = cv.normalize(
+        cv.distanceTransform(cv.bitwise_not(yellowThresh), cv.DIST_L2, 5),
+        None,
+        0,
+        255,
+        cv.NORM_MINMAX,
+        cv.CV_8UC1,
+    )
+    combinedDist = cv.normalize(
+        cv.distanceTransform(cv.bitwise_not(combinedThresh), cv.DIST_L2, 5),
+        None,
+        0,
+        255,
+        cv.NORM_MINMAX,
+        cv.CV_8UC1,
+    )
+
+    diff = cv.absdiff(blueDist, yellowDist)
+    ret, potPath = cv.threshold(diff, 1, 255, cv.THRESH_BINARY_INV)
+    sobel = cv.normalize(
+        cv.Sobel(combinedDist, cv.CV_64F, 1, 0, ksize=5),
+        None,
+        0,
+        255,
+        cv.NORM_MINMAX,
+        cv.CV_8UC1,
+    )
+
+    match currentlyShowing:
+        case -1:
+            txt = "BLU"
+            showFrame = cv.cvtColor(blueThresh, cv.COLOR_GRAY2BGR)
+        case -2:
+            txt = "YLW"
+            showFrame = cv.cvtColor(yellowThresh, cv.COLOR_GRAY2BGR)
+        case -3:
+            txt = "BDST"
+            showFrame = cv.cvtColor(blueDist, cv.COLOR_GRAY2BGR)
+        case -4:
+            txt = "YDST"
+            showFrame = cv.cvtColor(yellowDist, cv.COLOR_GRAY2BGR)
+        case -5:
+            txt = "ADIF"
+            showFrame = cv.cvtColor(diff, cv.COLOR_GRAY2BGR)
+        case -6:
+            txt = "THR"
+            showFrame = cv.cvtColor(potPath, cv.COLOR_GRAY2BGR)
+        case -7:
+            txt = "CMB"
+            showFrame = cv.cvtColor(combinedThresh, cv.COLOR_GRAY2BGR)
+        case -8:
+            txt = "CDST"
+            showFrame = cv.cvtColor(combinedDist, cv.COLOR_GRAY2BGR)
+        case -9:
+            txt = "HSBL"
+            showFrame = cv.cvtColor(sobel, cv.COLOR_GRAY2BGR)
+        case 0:
+            txt = "RGB"
+            showFrame = inputImg
+        case 1:
+            txt = "Hue"
+            showFrame = hsvHueOnly
+        case 2:
+            txt = "Sat"
+            showFrame = hsvSatOnly
+        case 3:
+            txt = "Val"
+            showFrame = hsvValOnly
+        case 4:
+            txt = "HSV"
+            showFrame = hsvImg
+        case _:
+            txt = "Dflt"
+            showFrame = inputImg
+
+    samplePixel = showFrame[mouseY, mouseX]
     rtext(showFrame, txt, (5, 30))
     rtext(
         showFrame,
@@ -108,6 +233,16 @@ while True:
         f"H{hsvPixel[0]:03d} S{hsvPixel[1]:03d} V{hsvPixel[2]:03d}",
         (5, 120),
     )
+    rtext(
+        showFrame,
+        f"R{samplePixel[2]:03d} G{samplePixel[1]:03d} B{samplePixel[0]:03d}",
+        (5, 210),
+    )
+    dt = end_time - start_time
+    time_ms = dt * 1000
+    fps = 1 / dt
+    rtext(showFrame, f"T:{time_ms:03.0f}ms FPS:{fps:03.0f}", (5, 150))
+    rtext(showFrame, f"W:{width} H:{height}", (5, 180))
     cv.imshow(window_title, showFrame)
 
     if k == ord(" ") or k == ord("q"):

@@ -50,7 +50,7 @@ yellowHigh = (80, 255, 190)
 magentaLow = (200, 200, 0)
 magentaHigh = (255, 255, 255)
 
-# BGR edge fills so Voronoi always has a boundary
+# BGR color fills
 blueFill = (160, 90, 6)
 yellowFill = (30, 170, 170)
 
@@ -65,16 +65,18 @@ colourKernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
 
 pathOpenKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
 pathCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, (9, 9))
-pathDilateKernel = cv.getStructuringElement(cv.MORPH_RECT, (11, 11))
+pathDilateKernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
 
-derivativeKernelSize = 17
+derivativeKernelSize = 21
+pathThresholdVal = 90
+horizCutoffDist = 100
 
 cap = cv.VideoCapture(0)
 if not cap.isOpened():
     print("Cannot open camera")
     exit()
 
-picIn = cv.imread("test3.png")  # TODO TESTING ONLY
+picIn = cv.imread("test4.png")  # TODO TESTING ONLY
 while True:
     k = cv.waitKey(1)
 
@@ -112,17 +114,18 @@ while True:
     start_time = time.time()
 
     # IMAGE INPUT
-    ret = True
-    inputImg = picIn.copy()
+    # ret = True
+    # inputImg = picIn.copy()
     # inputImg = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
-    # ret, inputImg = cap.read()
-    # if ret == False:
-    # break
+    ret, inputImg = cap.read()
+    if ret == False:
+        break
 
+    # TODO never changes
     rows, cols, channels = inputImg.shape
     # fill the edges so voronoi will always have a boundary
-    inputImg[:, 0:5] = blueFill
-    inputImg[:, cols - 5 : cols] = yellowFill
+    # inputImg[:, 0:5] = blueFill
+    # inputImg[:, cols - 5 : cols] = yellowFill
     # inputImg = cv.flip(inputImg, 1)  # TODO ONLY FOR LAPTOP TEST
 
     # calculate thresholding for obstacles
@@ -136,6 +139,7 @@ while True:
 
     combinedDist = cv.distanceTransform(cv.bitwise_not(combinedThresh), cv.DIST_L2, 5)
 
+    # TODO This never changes, can be computed at startup
     bottomRowsMask = np.zeros_like(combinedDist, np.uint8)
     bottomRowsMask[rows - 5 : rows, :] = 1
 
@@ -143,11 +147,18 @@ while True:
     # rawSobel = np.uint8(rawSobel)
 
     sobel = cv.normalize(rawSobel, None, 0, 255, cv.NORM_MINMAX, cv.CV_8UC1)
-    derMin, derMax, derMinLoc, derMaxLoc = cv.minMaxLoc(sobel, bottomRowsMask)
-    ret, rawPaths = cv.threshold(sobel, derMin + 80, 255, cv.THRESH_BINARY_INV)
+    derivativeMin, derivativeMax, derivativeMinLoc, derivativeMaxLoc = cv.minMaxLoc(
+        sobel, bottomRowsMask
+    )
+    ret, rawPaths = cv.threshold(
+        sobel, derivativeMin + pathThresholdVal, 255, cv.THRESH_BINARY_INV
+    )
     denoisedPaths = cv.morphologyEx(rawPaths, cv.MORPH_OPEN, pathOpenKernel)
-    # finalPaths = cv.dilate(denoisedPaths, pathDilateKernel)
-    finalPaths = denoisedPaths
+    finalPaths = cv.dilate(denoisedPaths, pathDilateKernel)
+
+    contours, hierarchy = cv.findContours(
+        finalPaths, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE
+    )
 
     end_time = time.time()
 
@@ -191,6 +202,7 @@ while True:
         case -10:
             txt = "CNTR"
             showFrame = cv.cvtColor(finalPaths, cv.COLOR_GRAY2BGR)
+            cv.drawContours(showFrame, contours, -1, (0, 255, 0), 2)
         case 0:
             txt = "RGB"
             showFrame = inputImg
@@ -215,6 +227,8 @@ while True:
             showFrame = inputImg
 
     # pixel is in BGR!
+    mouseX = min(max(mouseX, 0), cols)
+    mouseY = min(max(mouseY, 0), rows)
     rgbPixel = inputImg[mouseY, mouseX]
     hsvPixel = hsvImg[mouseY, mouseX]
     samplePixel = showFrame[mouseY, mouseX]

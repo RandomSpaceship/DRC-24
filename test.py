@@ -161,13 +161,15 @@ while True:
     diff = cv.absdiff(blueDist, yellowDist)
     ret, potPath = cv.threshold(diff, 1, 255, cv.THRESH_BINARY_INV)
     sobel = cv.normalize(
-        cv.Sobel(combinedDist, cv.CV_64F, 1, 0, ksize=5),
+        cv.Sobel(combinedDist, cv.CV_64F, 2, 0, ksize=7),
         None,
         0,
         255,
         cv.NORM_MINMAX,
         cv.CV_8UC1,
     )
+    ret, cpath = cv.threshold(sobel, 90, 255, cv.THRESH_BINARY_INV)
+    # sobel = cv.GaussianBlur(sobel, (21, 21), 0)
 
     match currentlyShowing:
         case -1:
@@ -197,6 +199,9 @@ while True:
         case -9:
             txt = "HSBL"
             showFrame = cv.cvtColor(sobel, cv.COLOR_GRAY2BGR)
+        case -10:
+            txt = "TST"
+            showFrame = cv.cvtColor(cpath, cv.COLOR_GRAY2BGR)
         case 0:
             txt = "RGB"
             showFrame = inputImg

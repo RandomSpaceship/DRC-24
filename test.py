@@ -59,7 +59,8 @@ img[10, 10] = 255
 img[20, 1000] = 255
 img[:, 800:] = 255
 
-morphKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+morphKernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+pathMorphKernel = cv.getStructuringElement(cv.MORPH_RECT, (21, 21))
 
 cap = cv.VideoCapture(0)
 if not cap.isOpened():
@@ -161,14 +162,17 @@ while True:
     diff = cv.absdiff(blueDist, yellowDist)
     ret, potPath = cv.threshold(diff, 1, 255, cv.THRESH_BINARY_INV)
     sobel = cv.normalize(
-        cv.Sobel(combinedDist, cv.CV_64F, 2, 0, ksize=7),
+        cv.Sobel(combinedDist, cv.CV_64F, 2, 0, ksize=21),
         None,
         0,
         255,
         cv.NORM_MINMAX,
         cv.CV_8UC1,
     )
-    ret, cpath = cv.threshold(sobel, 90, 255, cv.THRESH_BINARY_INV)
+    ret, cpath = cv.threshold(sobel, 120, 255, cv.THRESH_BINARY_INV)
+    # paths = cv.dilate(cpath, morphKernel)
+    paths = cv.dilate(cpath, pathMorphKernel)
+    # paths = cv.morphologyEx(cpath, cv.MORPH_CLOSE, pathMorphKernel)
     # sobel = cv.GaussianBlur(sobel, (21, 21), 0)
 
     match currentlyShowing:
@@ -188,8 +192,8 @@ while True:
             txt = "ADIF"
             showFrame = cv.cvtColor(diff, cv.COLOR_GRAY2BGR)
         case -6:
-            txt = "THR"
-            showFrame = cv.cvtColor(potPath, cv.COLOR_GRAY2BGR)
+            txt = "PATH"
+            showFrame = cv.cvtColor(paths, cv.COLOR_GRAY2BGR)
         case -7:
             txt = "CMB"
             showFrame = cv.cvtColor(combinedThresh, cv.COLOR_GRAY2BGR)

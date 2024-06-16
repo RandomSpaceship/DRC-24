@@ -69,12 +69,14 @@ pathDilateKernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
 
 derivativeKernelSize = 21
 pathThresholdVal = 90
-horizCutoffDist = 100
+pathMinArea = 15
+horizCutoffDist = 150
+bottomRowsPathCheck = 5
 
-cap = cv.VideoCapture(0)
-if not cap.isOpened():
-    print("Cannot open camera")
-    exit()
+# cap = cv.VideoCapture(0)
+# if not cap.isOpened():
+#     print("Cannot open camera")
+#     exit()
 
 picIn = cv.imread("test4.png")  # TODO TESTING ONLY
 while True:
@@ -100,6 +102,10 @@ while True:
         currentlyShowing = -9
     if k == ord("0"):
         currentlyShowing = -10
+    if k == ord("-"):
+        currentlyShowing = -11
+    if k == ord("="):
+        currentlyShowing = -12
     if k == ord("g"):
         currentlyShowing = 0
     if k == ord("H"):
@@ -115,14 +121,16 @@ while True:
 
     # IMAGE INPUT
     # ret = True
-    # inputImg = picIn.copy()
+    inputImg = picIn.copy()
     # inputImg = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
-    ret, inputImg = cap.read()
-    if ret == False:
-        break
+    # ret, inputImg = cap.read()
+    # if ret == False:
+    #     break
 
     # TODO never changes
     rows, cols, channels = inputImg.shape
+    centre_x = cols / 2
+    centre_y = rows / 2
     # fill the edges so voronoi will always have a boundary
     # inputImg[:, 0:5] = blueFill
     # inputImg[:, cols - 5 : cols] = yellowFill
@@ -141,7 +149,7 @@ while True:
 
     # TODO This never changes, can be computed at startup
     bottomRowsMask = np.zeros_like(combinedDist, np.uint8)
-    bottomRowsMask[rows - 5 : rows, :] = 1
+    bottomRowsMask[rows - bottomRowsPathCheck : rows, :] = 1
 
     rawSobel = cv.Sobel(combinedDist, cv.CV_32F, 2, 0, ksize=derivativeKernelSize)
     # rawSobel = np.uint8(rawSobel)
@@ -155,11 +163,42 @@ while True:
     )
     denoisedPaths = cv.morphologyEx(rawPaths, cv.MORPH_OPEN, pathOpenKernel)
     finalPaths = cv.dilate(denoisedPaths, pathDilateKernel)
+    # finalPaths = cv.ximgproc.thinning(
+    # finalPaths
+    # )  # TODO this is very expensive, is it needed?
 
     contours, hierarchy = cv.findContours(
         finalPaths, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE
     )
 
+    contour_moments = [None] * len(contours)
+    centroids = [None] * len(contours)
+    bounding_boxes = [None] * len(contours)
+    valid_path_contour_indices = []
+    nearby_path_contour_indices = []
+
+    for i in range(len(contours)):
+        contour = contours[i]
+        contour_moments[i] = cv.moments(contour, True)
+        # add 1e-5 to avoid division by zero
+        centroid_x = int(contour_moments[i]["m10"] / (contour_moments[i]["m00"] + 1e-5))
+        centroid_y = int(contour_moments[i]["m01"] / (contour_moments[i]["m00"] + 1e-5))
+        centroids[i] = (centroid_x, centroid_y)
+
+        bounding_box = cv.boundingRect(contour)
+        bounding_boxes[i] = bounding_box
+        tr_x, tr_y, w, h = bounding_box
+        bl_x = tr_x + w
+        bl_y = tr_y + h
+        if bl_y >= rows - bottomRowsPathCheck and cv.contourArea(contour) > pathMinArea:
+            valid_path_contour_indices.append(i)
+            if (
+                abs(centre_x - bl_x) < horizCutoffDist
+                or abs(centre_x - tr_x) < horizCutoffDist
+            ):
+                nearby_path_contour_indices.append(i)
+
+    # lines = cv.HoughLinesP(finalPaths, 1, np.pi / 180, 30, None, 50, 10)
     end_time = time.time()
 
     # RENDERING
@@ -202,7 +241,35 @@ while True:
         case -10:
             txt = "CNTR"
             showFrame = cv.cvtColor(finalPaths, cv.COLOR_GRAY2BGR)
-            cv.drawContours(showFrame, contours, -1, (0, 255, 0), 2)
+            cv.drawContours(showFrame, contours, -1, (0, 255, 0), 1, cv.LINE_AA)
+            for centroid in centroids:
+                cv.drawMarker(showFrame, centroid, (255, 0, 0), cv.MARKER_CROSS, 11, 3)
+            for x, y, w, h in bounding_boxes:
+                cv.rectangle(
+                    showFrame, (x, y), (x + w, y + h), (0, 0, 255), 2, cv.LINE_AA
+                )
+        case -11:
+            txt = "BCTR"
+            showFrame = cv.cvtColor(finalPaths, cv.COLOR_GRAY2BGR)
+            for i in valid_path_contour_indices:
+                cv.drawContours(showFrame, contours, i, (255, 255, 0), -1, cv.LINE_AA)
+            for i in nearby_path_contour_indices:
+                cv.drawContours(
+                    showFrame,
+                    contours,
+                    i,
+                    (0, 0, 255),
+                    2,
+                    cv.LINE_AA,
+                )
+        # case -12:
+        #     txt = "PATH"
+        #     showFrame = np.zeros_like(inputImg)
+        #     for tmp in lines:
+        #         line = tmp[0]
+        #         p1 = (line[0], line[1])
+        #         p2 = (line[2], line[3])
+        #         cv.line(showFrame, p1, p2, (0, 0, 255), 2, cv.LINE_AA)
         case 0:
             txt = "RGB"
             showFrame = inputImg
@@ -264,5 +331,5 @@ while True:
     if k == ord(" ") or k == ord("q"):
         break
 
-cap.release()
 cv.destroyAllWindows()
+cap.release()

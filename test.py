@@ -44,9 +44,11 @@ def rtext(img, text, org):
 
 
 blueLow = (100, 200, 0)
-blueHigh = (200, 255, 255)
+blueHigh = (180, 255, 255)
 yellowLow = (0, 200, 0)
 yellowHigh = (80, 255, 190)
+magentaLow = (200, 200, 0)
+magentaHigh = (255, 255, 255)
 
 # BGR edge fills so Voronoi always has a boundary
 blueFill = (160, 90, 6)
@@ -59,14 +61,20 @@ img[10, 10] = 255
 img[20, 1000] = 255
 img[:, 800:] = 255
 
-morphKernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
-pathMorphKernel = cv.getStructuringElement(cv.MORPH_RECT, (21, 21))
+colourKernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+
+pathOpenKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+pathCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, (9, 9))
+pathDilateKernel = cv.getStructuringElement(cv.MORPH_RECT, (11, 11))
+
+derivativeKernelSize = 17
 
 cap = cv.VideoCapture(0)
 if not cap.isOpened():
     print("Cannot open camera")
     exit()
 
+picIn = cv.imread("test3.png")  # TODO TESTING ONLY
 while True:
     k = cv.waitKey(1)
 
@@ -102,79 +110,48 @@ while True:
         currentlyShowing = 4
 
     start_time = time.time()
-    ret = True
-    inputImg = cv.imread("test2.png")
 
+    # IMAGE INPUT
+    ret = True
+    inputImg = picIn.copy()
     # inputImg = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
     # ret, inputImg = cap.read()
     # if ret == False:
     # break
 
-    height, width, channels = inputImg.shape
+    rows, cols, channels = inputImg.shape
+    # fill the edges so voronoi will always have a boundary
     inputImg[:, 0:5] = blueFill
-    inputImg[:, width - 5 : width] = yellowFill
-    # inputImg = cv.flip(inputImg, 1)  # TODO REMOVE ON FINAL
+    inputImg[:, cols - 5 : cols] = yellowFill
+    # inputImg = cv.flip(inputImg, 1)  # TODO ONLY FOR LAPTOP TEST
 
+    # calculate thresholding for obstacles
     hsvImg = cv.cvtColor(inputImg, cv.COLOR_BGR2HSV_FULL)
-    hsvHueOnly = hsvImg.copy()
-    hsvHueOnly[:, :, 1] = 255
-    hsvHueOnly[:, :, 2] = 255
-    hsvHueOnly = cv.cvtColor(hsvHueOnly, cv.COLOR_HSV2BGR_FULL)
-    hsvSatOnly = cv.cvtColor(hsvImg[:, :, 1], cv.COLOR_GRAY2BGR)
-    hsvValOnly = cv.cvtColor(hsvImg[:, :, 2], cv.COLOR_GRAY2BGR)
-
-    # pixel is in BGR!
-    rgbPixel = inputImg[mouseY, mouseX]
-    hsvPixel = hsvImg[mouseY, mouseX]
-
     blueThresh = cv.inRange(hsvImg, blueLow, blueHigh)
-    blueThresh = cv.morphologyEx(blueThresh, cv.MORPH_OPEN, morphKernel)
     yellowThresh = cv.inRange(hsvImg, yellowLow, yellowHigh)
-    yellowThresh = cv.morphologyEx(yellowThresh, cv.MORPH_OPEN, morphKernel)
+    magentaThresh = cv.inRange(hsvImg, magentaLow, magentaHigh)
     combinedThresh = cv.bitwise_xor(yellowThresh, blueThresh)
+    combinedThresh = cv.bitwise_xor(combinedThresh, magentaThresh)
+    combinedThresh = cv.morphologyEx(combinedThresh, cv.MORPH_OPEN, colourKernel)
+
+    combinedDist = cv.distanceTransform(cv.bitwise_not(combinedThresh), cv.DIST_L2, 5)
+
+    bottomRowsMask = np.zeros_like(combinedDist, np.uint8)
+    bottomRowsMask[rows - 5 : rows, :] = 1
+
+    rawSobel = cv.Sobel(combinedDist, cv.CV_32F, 2, 0, ksize=derivativeKernelSize)
+    # rawSobel = np.uint8(rawSobel)
+
+    sobel = cv.normalize(rawSobel, None, 0, 255, cv.NORM_MINMAX, cv.CV_8UC1)
+    derMin, derMax, derMinLoc, derMaxLoc = cv.minMaxLoc(sobel, bottomRowsMask)
+    ret, rawPaths = cv.threshold(sobel, derMin + 80, 255, cv.THRESH_BINARY_INV)
+    denoisedPaths = cv.morphologyEx(rawPaths, cv.MORPH_OPEN, pathOpenKernel)
+    # finalPaths = cv.dilate(denoisedPaths, pathDilateKernel)
+    finalPaths = denoisedPaths
+
     end_time = time.time()
 
-    blueDist = cv.normalize(
-        cv.distanceTransform(cv.bitwise_not(blueThresh), cv.DIST_L2, 5),
-        None,
-        0,
-        255,
-        cv.NORM_MINMAX,
-        cv.CV_8UC1,
-    )
-    yellowDist = cv.normalize(
-        cv.distanceTransform(cv.bitwise_not(yellowThresh), cv.DIST_L2, 5),
-        None,
-        0,
-        255,
-        cv.NORM_MINMAX,
-        cv.CV_8UC1,
-    )
-    combinedDist = cv.normalize(
-        cv.distanceTransform(cv.bitwise_not(combinedThresh), cv.DIST_L2, 5),
-        None,
-        0,
-        255,
-        cv.NORM_MINMAX,
-        cv.CV_8UC1,
-    )
-
-    diff = cv.absdiff(blueDist, yellowDist)
-    ret, potPath = cv.threshold(diff, 1, 255, cv.THRESH_BINARY_INV)
-    sobel = cv.normalize(
-        cv.Sobel(combinedDist, cv.CV_64F, 2, 0, ksize=21),
-        None,
-        0,
-        255,
-        cv.NORM_MINMAX,
-        cv.CV_8UC1,
-    )
-    ret, cpath = cv.threshold(sobel, 120, 255, cv.THRESH_BINARY_INV)
-    # paths = cv.dilate(cpath, morphKernel)
-    paths = cv.dilate(cpath, pathMorphKernel)
-    # paths = cv.morphologyEx(cpath, cv.MORPH_CLOSE, pathMorphKernel)
-    # sobel = cv.GaussianBlur(sobel, (21, 21), 0)
-
+    # RENDERING
     match currentlyShowing:
         case -1:
             txt = "BLU"
@@ -183,41 +160,53 @@ while True:
             txt = "YLW"
             showFrame = cv.cvtColor(yellowThresh, cv.COLOR_GRAY2BGR)
         case -3:
-            txt = "BDST"
-            showFrame = cv.cvtColor(blueDist, cv.COLOR_GRAY2BGR)
+            txt = "MAG"
+            showFrame = cv.cvtColor(magentaThresh, cv.COLOR_GRAY2BGR)
         case -4:
-            txt = "YDST"
-            showFrame = cv.cvtColor(yellowDist, cv.COLOR_GRAY2BGR)
-        case -5:
-            txt = "ADIF"
-            showFrame = cv.cvtColor(diff, cv.COLOR_GRAY2BGR)
-        case -6:
-            txt = "PATH"
-            showFrame = cv.cvtColor(paths, cv.COLOR_GRAY2BGR)
-        case -7:
             txt = "CMB"
             showFrame = cv.cvtColor(combinedThresh, cv.COLOR_GRAY2BGR)
-        case -8:
-            txt = "CDST"
-            showFrame = cv.cvtColor(combinedDist, cv.COLOR_GRAY2BGR)
-        case -9:
+        case -5:
+            txt = "DIST"
+            combinedDistFrame = cv.normalize(
+                combinedDist,
+                None,
+                0,
+                255,
+                cv.NORM_MINMAX,
+                cv.CV_8UC1,
+            )
+            showFrame = cv.cvtColor(combinedDistFrame, cv.COLOR_GRAY2BGR)
+        case -6:
             txt = "HSBL"
             showFrame = cv.cvtColor(sobel, cv.COLOR_GRAY2BGR)
+        case -7:
+            txt = "RPTH"
+            showFrame = cv.cvtColor(rawPaths, cv.COLOR_GRAY2BGR)
+        case -8:
+            txt = "DNPT"
+            showFrame = cv.cvtColor(denoisedPaths, cv.COLOR_GRAY2BGR)
+        case -9:
+            txt = "FPTH"
+            showFrame = cv.cvtColor(finalPaths, cv.COLOR_GRAY2BGR)
         case -10:
-            txt = "TST"
-            showFrame = cv.cvtColor(cpath, cv.COLOR_GRAY2BGR)
+            txt = "CNTR"
+            showFrame = cv.cvtColor(finalPaths, cv.COLOR_GRAY2BGR)
         case 0:
             txt = "RGB"
             showFrame = inputImg
         case 1:
             txt = "Hue"
+            hsvHueOnly = hsvImg.copy()
+            hsvHueOnly[:, :, 1] = 255
+            hsvHueOnly[:, :, 2] = 255
+            hsvHueOnly = cv.cvtColor(hsvHueOnly, cv.COLOR_HSV2BGR_FULL)
             showFrame = hsvHueOnly
         case 2:
             txt = "Sat"
-            showFrame = hsvSatOnly
+            showFrame = cv.cvtColor(hsvImg[:, :, 1], cv.COLOR_GRAY2BGR)
         case 3:
             txt = "Val"
-            showFrame = hsvValOnly
+            showFrame = cv.cvtColor(hsvImg[:, :, 2], cv.COLOR_GRAY2BGR)
         case 4:
             txt = "HSV"
             showFrame = hsvImg
@@ -225,7 +214,11 @@ while True:
             txt = "Dflt"
             showFrame = inputImg
 
+    # pixel is in BGR!
+    rgbPixel = inputImg[mouseY, mouseX]
+    hsvPixel = hsvImg[mouseY, mouseX]
     samplePixel = showFrame[mouseY, mouseX]
+
     rtext(showFrame, txt, (5, 30))
     rtext(
         showFrame,
@@ -251,7 +244,7 @@ while True:
     time_ms = dt * 1000
     fps = 1 / dt
     rtext(showFrame, f"T:{time_ms:03.0f}ms FPS:{fps:03.0f}", (5, 150))
-    rtext(showFrame, f"W:{width} H:{height}", (5, 180))
+    rtext(showFrame, f"W:{cols} H:{rows}", (5, 180))
     cv.imshow(window_title, showFrame)
 
     if k == ord(" ") or k == ord("q"):
@@ -259,25 +252,3 @@ while True:
 
 cap.release()
 cv.destroyAllWindows()
-
-# import numpy as np
-# import cv as cv
-
-
-# while True:
-#     # Capture frame-by-frame
-#     ret = True
-#     frame = cv.imread("test.png")
-
-#     # if frame is read correctly ret is True
-#     if not ret:
-#         print("Can't receive frame (stream end?). Exiting ...")
-#         break
-#     # Our operations on the frame come here
-#     gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-#     # Display the resulting frame
-#     cv.imshow("frame", gray)
-#     if cv.waitKey(1) == ord("q"):
-#         break
-
-# # When everything done, release the capture

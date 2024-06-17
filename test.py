@@ -64,13 +64,12 @@ img[:, 800:] = 255
 colourKernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
 
 pathOpenKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
-pathCloseKernel = cv.getStructuringElement(cv.MORPH_RECT, (9, 9))
 pathDilateKernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
 
 derivativeKernelSize = 21
 pathThresholdVal = 90
 pathMinArea = 15
-horizCutoffDist = 150
+horizCutoffDist = 250
 bottomRowsPathCheck = 5
 
 # cap = cv.VideoCapture(0)
@@ -78,7 +77,7 @@ bottomRowsPathCheck = 5
 #     print("Cannot open camera")
 #     exit()
 
-picIn = cv.imread("test4.png")  # TODO TESTING ONLY
+picIn = cv.imread("test2.png")  # TODO TESTING ONLY
 while True:
     k = cv.waitKey(1)
 
@@ -154,21 +153,16 @@ while True:
     rawSobel = cv.Sobel(combinedDist, cv.CV_32F, 2, 0, ksize=derivativeKernelSize)
     # rawSobel = np.uint8(rawSobel)
 
-    sobel = cv.normalize(rawSobel, None, 0, 255, cv.NORM_MINMAX, cv.CV_8UC1)
+    sobel = cv.normalize(rawSobel, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
     derivativeMin, derivativeMax, derivativeMinLoc, derivativeMaxLoc = cv.minMaxLoc(
         sobel, bottomRowsMask
     )
-    ret, rawPaths = cv.threshold(
-        sobel, derivativeMin + pathThresholdVal, 255, cv.THRESH_BINARY_INV
-    )
+    rawPaths = cv.inRange(sobel, 0, derivativeMin + pathThresholdVal)
     denoisedPaths = cv.morphologyEx(rawPaths, cv.MORPH_OPEN, pathOpenKernel)
     finalPaths = cv.dilate(denoisedPaths, pathDilateKernel)
-    # finalPaths = cv.ximgproc.thinning(
-    # finalPaths
-    # )  # TODO this is very expensive, is it needed?
 
     contours, hierarchy = cv.findContours(
-        finalPaths, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE
+        finalPaths, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE
     )
 
     contour_moments = [None] * len(contours)
@@ -195,9 +189,13 @@ while True:
             if (
                 abs(centre_x - bl_x) < horizCutoffDist
                 or abs(centre_x - tr_x) < horizCutoffDist
+                or abs(centre_x - centroid_x) < horizCutoffDist
             ):
                 nearby_path_contour_indices.append(i)
 
+    test = np.zeros_like(finalPaths)
+    for i in nearby_path_contour_indices:
+        cv.drawContours(test, contours, i, (255, 255, 255), cv.FILLED)
     # lines = cv.HoughLinesP(finalPaths, 1, np.pi / 180, 30, None, 50, 10)
     end_time = time.time()
 
@@ -227,11 +225,11 @@ while True:
             )
             showFrame = cv.cvtColor(combinedDistFrame, cv.COLOR_GRAY2BGR)
         case -6:
-            txt = "HSBL"
+            txt = "SBL"
             showFrame = cv.cvtColor(sobel, cv.COLOR_GRAY2BGR)
         case -7:
-            txt = "RPTH"
-            showFrame = cv.cvtColor(rawPaths, cv.COLOR_GRAY2BGR)
+            txt = "PTHS"
+            showFrame = cv.cvtColor(test, cv.COLOR_GRAY2BGR)
         case -8:
             txt = "DNPT"
             showFrame = cv.cvtColor(denoisedPaths, cv.COLOR_GRAY2BGR)
@@ -293,6 +291,14 @@ while True:
             txt = "Dflt"
             showFrame = inputImg
 
+    cv.line(showFrame, (int(cols / 2), 0), (int(cols / 2), rows), (255, 0, 255), 2)
+    cv.line(
+        showFrame,
+        (int(cols / 2) - horizCutoffDist, rows),
+        (int(cols / 2) + horizCutoffDist, rows),
+        (255, 0, 255),
+        2,
+    )
     # pixel is in BGR!
     mouseX = min(max(mouseX, 0), cols)
     mouseY = min(max(mouseY, 0), rows)
@@ -318,7 +324,7 @@ while True:
     )
     rtext(
         showFrame,
-        f"R{samplePixel[2]:03d} G{samplePixel[1]:03d} B{samplePixel[0]:03d}",
+        f"R{samplePixel[2]:03.0f} G{samplePixel[1]:03.0f} B{samplePixel[0]:03.0f}",
         (5, 210),
     )
     dt = end_time - start_time
@@ -328,7 +334,7 @@ while True:
     rtext(showFrame, f"W:{cols} H:{rows}", (5, 180))
     cv.imshow(window_title, showFrame)
 
-    if k == ord(" ") or k == ord("q"):
+    if k == ord("q"):
         break
 
 cv.destroyAllWindows()

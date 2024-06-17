@@ -61,16 +61,18 @@ img[10, 10] = 255
 img[20, 1000] = 255
 img[:, 800:] = 255
 
-colourKernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+colour_denoise_kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
 
-pathOpenKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
-pathDilateKernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
+path_open_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
+path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
 
-derivativeKernelSize = 21
-pathThresholdVal = 90
-pathMinArea = 15
-horizCutoffDist = 250
-bottomRowsPathCheck = 5
+derivative_kernel_size = 21
+path_threshold_val = 90
+path_minimum_area = 15
+horizontal_cutoff_dist = 0.5  # img proportion
+check_slice_height = 5
+
+path_angle_height_offset = 0.35  # img proportion
 
 # cap = cv.VideoCapture(0)
 # if not cap.isOpened():
@@ -128,12 +130,15 @@ while True:
 
     # TODO never changes
     rows, cols, channels = inputImg.shape
-    centre_x = cols / 2
-    centre_y = rows / 2
+    centre_x = int(cols / 2)
+    centre_y = int(rows / 2)
     # fill the edges so voronoi will always have a boundary
     # inputImg[:, 0:5] = blueFill
     # inputImg[:, cols - 5 : cols] = yellowFill
     # inputImg = cv.flip(inputImg, 1)  # TODO ONLY FOR LAPTOP TEST
+    horizontal_cutoff_dist_px = int(horizontal_cutoff_dist * cols / 2)
+    path_angle_height_offset_px = int(rows * path_angle_height_offset)
+    path_centre_x = centre_x
 
     # calculate thresholding for obstacles
     hsvImg = cv.cvtColor(inputImg, cv.COLOR_BGR2HSV_FULL)
@@ -142,24 +147,26 @@ while True:
     magentaThresh = cv.inRange(hsvImg, magentaLow, magentaHigh)
     combinedThresh = cv.bitwise_xor(yellowThresh, blueThresh)
     combinedThresh = cv.bitwise_xor(combinedThresh, magentaThresh)
-    combinedThresh = cv.morphologyEx(combinedThresh, cv.MORPH_OPEN, colourKernel)
+    combinedThresh = cv.morphologyEx(
+        combinedThresh, cv.MORPH_OPEN, colour_denoise_kernel
+    )
 
     combinedDist = cv.distanceTransform(cv.bitwise_not(combinedThresh), cv.DIST_L2, 5)
 
     # TODO This never changes, can be computed at startup
     bottomRowsMask = np.zeros_like(combinedDist, np.uint8)
-    bottomRowsMask[rows - bottomRowsPathCheck : rows, :] = 1
+    bottomRowsMask[rows - check_slice_height : rows, :] = 1
 
-    rawSobel = cv.Sobel(combinedDist, cv.CV_32F, 2, 0, ksize=derivativeKernelSize)
+    rawSobel = cv.Sobel(combinedDist, cv.CV_32F, 2, 0, ksize=derivative_kernel_size)
     # rawSobel = np.uint8(rawSobel)
 
     sobel = cv.normalize(rawSobel, None, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
     derivativeMin, derivativeMax, derivativeMinLoc, derivativeMaxLoc = cv.minMaxLoc(
         sobel, bottomRowsMask
     )
-    rawPaths = cv.inRange(sobel, 0, derivativeMin + pathThresholdVal)
-    denoisedPaths = cv.morphologyEx(rawPaths, cv.MORPH_OPEN, pathOpenKernel)
-    finalPaths = cv.dilate(denoisedPaths, pathDilateKernel)
+    rawPaths = cv.inRange(sobel, 0, derivativeMin + path_threshold_val)
+    denoisedPaths = cv.morphologyEx(rawPaths, cv.MORPH_OPEN, path_open_kernel)
+    finalPaths = cv.dilate(denoisedPaths, path_dilate_kernel)
 
     contours, hierarchy = cv.findContours(
         finalPaths, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE
@@ -170,6 +177,9 @@ while True:
     bounding_boxes = [None] * len(contours)
     valid_path_contour_indices = []
     nearby_path_contour_indices = []
+
+    closest_path_idx = 0
+    closest_path_dist = 9999999
 
     for i in range(len(contours)):
         contour = contours[i]
@@ -184,19 +194,40 @@ while True:
         tr_x, tr_y, w, h = bounding_box
         bl_x = tr_x + w
         bl_y = tr_y + h
-        if bl_y >= rows - bottomRowsPathCheck and cv.contourArea(contour) > pathMinArea:
+        if (
+            bl_y >= rows - check_slice_height
+            and cv.contourArea(contour) > path_minimum_area
+        ):
             valid_path_contour_indices.append(i)
-            if (
-                abs(centre_x - bl_x) < horizCutoffDist
-                or abs(centre_x - tr_x) < horizCutoffDist
-                or abs(centre_x - centroid_x) < horizCutoffDist
-            ):
+            path_dist = min(
+                abs(path_centre_x - bl_x),
+                abs(path_centre_x - tr_x),
+                abs(path_centre_x - centroid_x),
+            )
+            if path_dist < horizontal_cutoff_dist_px:
                 nearby_path_contour_indices.append(i)
+                if path_dist < closest_path_dist:
+                    closest_path_dist = path_dist
+                    closest_path_idx = i
 
-    test = np.zeros_like(finalPaths)
-    for i in nearby_path_contour_indices:
-        cv.drawContours(test, contours, i, (255, 255, 255), cv.FILLED)
-    # lines = cv.HoughLinesP(finalPaths, 1, np.pi / 180, 30, None, 50, 10)
+    closest_path = np.zeros_like(finalPaths)
+    cv.drawContours(
+        closest_path, contours, closest_path_idx, (255, 255, 255), cv.FILLED
+    )
+    bottom_moment = cv.moments(
+        closest_path[(rows - check_slice_height) : rows, :], True
+    )
+    bottom_x = int(bottom_moment["m10"] / (bottom_moment["m00"] + 1e-5))
+    angle_moment = cv.moments(
+        closest_path[
+            (rows - check_slice_height - path_angle_height_offset_px) : (
+                rows - path_angle_height_offset_px
+            ),
+            :,
+        ],
+        True,
+    )
+    angle_x = int(angle_moment["m10"] / (angle_moment["m00"] + 1e-5))
     end_time = time.time()
 
     # RENDERING
@@ -229,7 +260,7 @@ while True:
             showFrame = cv.cvtColor(sobel, cv.COLOR_GRAY2BGR)
         case -7:
             txt = "PTHS"
-            showFrame = cv.cvtColor(test, cv.COLOR_GRAY2BGR)
+            showFrame = cv.cvtColor(closest_path, cv.COLOR_GRAY2BGR)
         case -8:
             txt = "DNPT"
             showFrame = cv.cvtColor(denoisedPaths, cv.COLOR_GRAY2BGR)
@@ -291,13 +322,24 @@ while True:
             txt = "Dflt"
             showFrame = inputImg
 
-    cv.line(showFrame, (int(cols / 2), 0), (int(cols / 2), rows), (255, 0, 255), 2)
+    cv.line(showFrame, (centre_x, 0), (centre_x, rows), (255, 0, 255), 2)
     cv.line(
         showFrame,
-        (int(cols / 2) - horizCutoffDist, rows),
-        (int(cols / 2) + horizCutoffDist, rows),
+        (centre_x - horizontal_cutoff_dist_px, rows),
+        (centre_x + horizontal_cutoff_dist_px, rows),
         (255, 0, 255),
-        2,
+        3,
+    )
+    cv.drawMarker(
+        showFrame, (bottom_x, rows - 10), (255, 0, 0), cv.MARKER_DIAMOND, 11, 3
+    )
+    cv.drawMarker(
+        showFrame,
+        (angle_x, rows - path_angle_height_offset_px),
+        (255, 0, 0),
+        cv.MARKER_DIAMOND,
+        11,
+        3,
     )
     # pixel is in BGR!
     mouseX = min(max(mouseX, 0), cols)

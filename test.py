@@ -52,12 +52,12 @@ def process_key(key):
 
 
 def update_pcx(val):
-    global path_centre_x
+    global pathfinding_centre_x
     global image_centre_x
-    path_centre_x = image_centre_x + (val - 200)
+    pathfinding_centre_x = image_centre_x + (val - 200)
 
 
-def rtext(img, text, org):
+def rtext(img, text, org, col=(0, 0, 0)):
     cv.putText(
         img,
         text,
@@ -74,7 +74,7 @@ def rtext(img, text, org):
         org,
         cv.FONT_HERSHEY_SIMPLEX,
         1,
-        (0, 0, 0),
+        col,
         2,
         cv.LINE_AA,
     )
@@ -110,15 +110,24 @@ colour_denoise_kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
 path_open_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
 path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
 
-# TUNING PARAMETERS
+# PARAMETERS
 derivative_kernel_size = 21
 path_threshold_val = 90
 path_slice_height = 5
 
-# these are img proportions
+# filtering/slicing image proportions
 horizontal_cutoff_dist = 0.5
-path_middle_height = 0.7
+path_middle_height = 0.35
 path_min_area_proportion = 0.02 * 0.1
+
+# robot config parameters
+path_failsafe_time = 0.5
+
+Kp = 1
+Ki = 0
+Kd = 0
+
+setpoint = 0
 
 # cap = cv.VideoCapture(0)
 # if not cap.isOpened():
@@ -130,7 +139,7 @@ picIn = cv.imread("test4.png")  # TODO TESTING ONLY
 rows, cols, channels = picIn.shape
 image_centre_x = int(cols / 2)
 centre_y = int(rows / 2)
-path_centre_x = image_centre_x
+pathfinding_centre_x = image_centre_x
 horizontal_cutoff_dist_px = int(horizontal_cutoff_dist * cols / 2)
 path_middle_offset_px = int(rows * path_middle_height)
 path_minimum_area = int(path_min_area_proportion * rows * cols)
@@ -138,6 +147,11 @@ path_minimum_area = int(path_min_area_proportion * rows * cols)
 bottom_slice_mask = np.zeros((rows, cols), np.uint8)
 bottom_slice_mask[rows - path_slice_height : rows, :] = 1
 path_cutoff_height = rows - path_slice_height
+
+setpoint_px = int(image_centre_x + (setpoint * cols / 2))
+
+# FAILSAFE
+last_time_path_seen = time.time()
 
 while True:
     key = cv.waitKey(1)
@@ -218,11 +232,13 @@ while True:
     bounding_boxes = [None] * len(contours)
     potential_path_contours = []
 
-    closest_path_idx = -1
+    chosen_path_idx = -1
     closest_path_dist = 9999999
 
     # TODO maybe could cut this down to only the bottom/middle slices?
     # might interfere with bounding boxes but could be decent optimisation
+
+    # locate valid potential path contours
     for i in range(len(contours)):
         contour = contours[i]
         # calculate x/y centre of contour using moments
@@ -240,9 +256,9 @@ while True:
         bl_y = tr_y + h
 
         path_dist = min(
-            abs(path_centre_x - bl_x),
-            abs(path_centre_x - tr_x),
-            abs(path_centre_x - centroid_x),
+            abs(pathfinding_centre_x - bl_x),
+            abs(pathfinding_centre_x - tr_x),
+            abs(pathfinding_centre_x - centroid_x),
         )
         # if the path starts in the bottom rows,
         # AND if any of the contour corners or its centroid are
@@ -259,31 +275,43 @@ while True:
             # if it's closer, update the new distance and index
             if path_dist < closest_path_dist:
                 closest_path_dist = path_dist
-                closest_path_idx = i
+                chosen_path_idx = i
 
     # create a mask image with only the selected path in it
     chosen_path_mask = np.zeros_like(final_paths_mask)
-    cv.drawContours(chosen_path_mask, contours, closest_path_idx, 255, cv.FILLED)
-
-    # and then slice that and use moments to get the x coordinates of the start and middle of the path
-    path_start_slice = chosen_path_mask[(rows - path_slice_height) : rows, :]
-    path_start_moment = cv.moments(path_start_slice, True)
-    path_start_x = int(path_start_moment["m10"] / (path_start_moment["m00"] + 1e-5))
-    path_middle_slice_start = rows - path_middle_offset_px
-    path_middle_slice = chosen_path_mask[
-        path_middle_slice_start : (path_middle_slice_start + path_slice_height), :
-    ]
-    path_middle_moment = cv.moments(
-        path_middle_slice,
-        True,
-    )
+    path_start_x = pathfinding_centre_x
     path_middle_x = path_start_x
-    short_path_warn = True
-    if path_middle_moment["m10"] > 1:
-        path_middle_x = int(
-            path_middle_moment["m10"] / (path_middle_moment["m00"] + 1e-5)
+
+    # robot failsafe stop
+    should_stop = False
+
+    # failsafe if no path detected
+    if chosen_path_idx < 0:
+        if (time.time() - last_time_path_seen) > path_failsafe_time:
+            should_stop = True
+    else:
+        last_time_path_seen = time.time()
+        cv.drawContours(chosen_path_mask, contours, chosen_path_idx, 255, cv.FILLED)
+
+        # and then slice that and use moments to get the x coordinates of the start and middle of the path
+        path_start_slice = chosen_path_mask[(rows - path_slice_height) : rows, :]
+        path_start_moment = cv.moments(path_start_slice, True)
+        path_start_x = int(path_start_moment["m10"] / (path_start_moment["m00"] + 1e-5))
+        path_middle_slice_start = rows - path_middle_offset_px
+        path_middle_slice = chosen_path_mask[
+            path_middle_slice_start : (path_middle_slice_start + path_slice_height), :
+        ]
+        path_middle_moment = cv.moments(
+            path_middle_slice,
+            True,
         )
-        short_path_warn = False
+        path_middle_x = path_start_x
+        short_path_warn = True
+        if path_middle_moment["m10"] > 1:
+            path_middle_x = int(
+                path_middle_moment["m10"] / (path_middle_moment["m00"] + 1e-5)
+            )
+            short_path_warn = False
 
     end_time = time.time()
 
@@ -343,7 +371,7 @@ while True:
             cv.drawContours(
                 display_frame,
                 contours,
-                closest_path_idx,
+                chosen_path_idx,
                 (255, 255),
                 -1,
                 cv.LINE_AA,
@@ -380,15 +408,21 @@ while True:
             txt = "Dflt"
             display_frame = input_frame
 
-    main_path_error = path_start_x - image_centre_x
+    main_path_error = path_start_x - setpoint_px
     future_path_error = path_middle_x - path_start_x
 
     # draw calculated pathfinding markers on final image
-    cv.line(display_frame, (path_centre_x, 0), (path_centre_x, rows), (255, 0, 255), 2)
     cv.line(
         display_frame,
-        (path_centre_x - horizontal_cutoff_dist_px, rows),
-        (path_centre_x + horizontal_cutoff_dist_px, rows),
+        (pathfinding_centre_x, 0),
+        (pathfinding_centre_x, rows),
+        (255, 0, 255),
+        2,
+    )
+    cv.line(
+        display_frame,
+        (pathfinding_centre_x - horizontal_cutoff_dist_px, rows),
+        (pathfinding_centre_x + horizontal_cutoff_dist_px, rows),
         (255, 0, 255),
         3,
     )

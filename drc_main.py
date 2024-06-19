@@ -57,15 +57,15 @@ def update_pcx(val):
     pathfinding_centre_x = image_centre_x + (val - 200)
 
 
-def rtext(img, text, org, col=(0, 0, 0)):
+def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
     cv.putText(
         img,
         text,
         org,
         cv.FONT_HERSHEY_SIMPLEX,
-        1,
-        (255, 255, 255),
-        4,
+        scale,
+        border,
+        4 * scale,
         cv.LINE_AA,
     )
     cv.putText(
@@ -73,9 +73,9 @@ def rtext(img, text, org, col=(0, 0, 0)):
         text,
         org,
         cv.FONT_HERSHEY_SIMPLEX,
-        1,
+        scale,
         col,
-        2,
+        2 * scale,
         cv.LINE_AA,
     )
 
@@ -115,13 +115,17 @@ derivative_kernel_size = 21
 path_threshold_val = 90
 path_slice_height = 5
 
+# more image proportions
+# if absolute error is les
+path_error_switch_start = 0.5
+
 # filtering/slicing image proportions
 horizontal_cutoff_dist = 0.5
-path_middle_height = 0.35
+future_path_height = 0.35
 path_min_area_proportion = 0.02 * 0.1
 
 # robot config parameters
-path_failsafe_time = 0.5
+path_failsafe_time = 0.5  # TODO
 
 Kp = 1
 Ki = 0
@@ -138,10 +142,10 @@ picIn = cv.imread("test4.png")  # TODO TESTING ONLY
 
 rows, cols, channels = picIn.shape
 image_centre_x = int(cols / 2)
-centre_y = int(rows / 2)
+image_centre_y = int(rows / 2)
 pathfinding_centre_x = image_centre_x
 horizontal_cutoff_dist_px = int(horizontal_cutoff_dist * cols / 2)
-path_middle_offset_px = int(rows * path_middle_height)
+future_path_offset_px = int(rows * future_path_height)
 path_minimum_area = int(path_min_area_proportion * rows * cols)
 
 bottom_slice_mask = np.zeros((rows, cols), np.uint8)
@@ -279,8 +283,12 @@ while True:
 
     # create a mask image with only the selected path in it
     chosen_path_mask = np.zeros_like(final_paths_mask)
-    path_start_x = pathfinding_centre_x
-    path_middle_x = path_start_x
+
+    # pathfinding output vars
+    current_path_x = pathfinding_centre_x
+    future_path_x = current_path_x
+    path_lost = False
+    short_path_warn = True
 
     # robot failsafe stop
     should_stop = False
@@ -289,27 +297,29 @@ while True:
     if chosen_path_idx < 0:
         if (time.time() - last_time_path_seen) > path_failsafe_time:
             should_stop = True
+        path_lost = True
     else:
         last_time_path_seen = time.time()
         cv.drawContours(chosen_path_mask, contours, chosen_path_idx, 255, cv.FILLED)
 
         # and then slice that and use moments to get the x coordinates of the start and middle of the path
-        path_start_slice = chosen_path_mask[(rows - path_slice_height) : rows, :]
-        path_start_moment = cv.moments(path_start_slice, True)
-        path_start_x = int(path_start_moment["m10"] / (path_start_moment["m00"] + 1e-5))
-        path_middle_slice_start = rows - path_middle_offset_px
-        path_middle_slice = chosen_path_mask[
-            path_middle_slice_start : (path_middle_slice_start + path_slice_height), :
+        current_path_slice = chosen_path_mask[(rows - path_slice_height) : rows, :]
+        current_path_moment = cv.moments(current_path_slice, True)
+        current_path_x = int(
+            current_path_moment["m10"] / (current_path_moment["m00"] + 1e-5)
+        )
+        future_path_slice_start = rows - future_path_offset_px
+        future_path_slice = chosen_path_mask[
+            future_path_slice_start : (future_path_slice_start + path_slice_height), :
         ]
-        path_middle_moment = cv.moments(
-            path_middle_slice,
+        future_path_moment = cv.moments(
+            future_path_slice,
             True,
         )
-        path_middle_x = path_start_x
-        short_path_warn = True
-        if path_middle_moment["m10"] > 1:
-            path_middle_x = int(
-                path_middle_moment["m10"] / (path_middle_moment["m00"] + 1e-5)
+        future_path_x = current_path_x
+        if future_path_moment["m10"] > 1:
+            future_path_x = int(
+                future_path_moment["m10"] / (future_path_moment["m00"] + 1e-5)
             )
             short_path_warn = False
 
@@ -408,8 +418,8 @@ while True:
             txt = "Dflt"
             display_frame = input_frame
 
-    main_path_error = path_start_x - setpoint_px
-    future_path_error = path_middle_x - path_start_x
+    main_path_error_px = current_path_x - setpoint_px
+    future_path_error_px = future_path_x - current_path_x
 
     # draw calculated pathfinding markers on final image
     cv.line(
@@ -427,11 +437,16 @@ while True:
         3,
     )
     cv.drawMarker(
-        display_frame, (path_start_x, rows - 10), (255, 0, 0), cv.MARKER_DIAMOND, 11, 3
+        display_frame,
+        (current_path_x, rows - 10),
+        (255, 0, 0),
+        cv.MARKER_DIAMOND,
+        11,
+        3,
     )
     cv.drawMarker(
         display_frame,
-        (path_middle_x, rows - path_middle_offset_px),
+        (future_path_x, rows - future_path_offset_px),
         (255, 0, 0),
         cv.MARKER_DIAMOND,
         11,
@@ -464,6 +479,7 @@ while True:
         f"H{hsvPixel[0]:03d} S{hsvPixel[1]:03d} V{hsvPixel[2]:03d}",
         (5, 120),
     )
+    rtext(display_frame, f"W:{cols} H:{rows}", (5, 180))
     rtext(
         display_frame,
         f"R{samplePixel[2]:03.0f} G{samplePixel[1]:03.0f} B{samplePixel[0]:03.0f}",
@@ -471,10 +487,41 @@ while True:
     )
     rtext(
         display_frame,
-        f"ERR: {main_path_error:+04.0f} {future_path_error:+04.0f}",
+        f"ERR: {main_path_error_px:+04.0f} {future_path_error_px:+04.0f}",
         (5, 240),
     )
-    rtext(display_frame, f"W:{cols} H:{rows}", (5, 180))
+
+    warn_text = ""
+    if short_path_warn:
+        warn_text = "NO FUTURE PATH"
+
+    if len(warn_text) > 0:
+        rtext(
+            display_frame,
+            f"WARN: {warn_text.upper()}",
+            (5, 270),
+            (0, 100, 255),
+            (0, 0, 0),
+        )
+
+    if should_stop:
+        rtext(
+            display_frame,
+            f"PATH LOSS TIMEOUT - STOP",
+            (5, image_centre_y),
+            (0, 0, 255),
+            (0, 0, 0),
+            2,
+        )
+    elif path_lost:
+        rtext(
+            display_frame,
+            f"PATH LOST",
+            (5, image_centre_y),
+            (0, 180, 255),
+            (0, 0, 0),
+            2,
+        )
 
     dt = end_time - start_time
     time_ms = dt * 1000

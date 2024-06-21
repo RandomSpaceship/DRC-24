@@ -528,6 +528,7 @@ while True:
     fps = 1 / dt
     rtext(display_frame, f"T:{time_ms:03.0f}ms FPS:{fps:03.0f}", (5, 150))
 
+    display_frame = cv.resize(display_frame, (int(cols / 2), int(rows / 2)))
     cv.imshow(window_title, display_frame)
 
 cv.destroyAllWindows()

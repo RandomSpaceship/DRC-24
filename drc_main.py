@@ -2,6 +2,12 @@ import cv2 as cv
 import numpy as np
 import time
 import math
+import os
+
+remote_display = True
+
+
+os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
 window_title = "DRC Pathfinder"
 
@@ -80,11 +86,6 @@ def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
     )
 
 
-# OPENCV WINDOW
-cv.namedWindow(window_title)
-cv.setMouseCallback(window_title, mouse_event)
-cv.createTrackbar("Path Xo", window_title, 200, 400, update_pcx)
-
 # DEBUGGING + DISPLAY
 currentlyShowing = 0
 
@@ -92,20 +93,27 @@ mouseX = 0
 mouseY = 0
 
 # THRESHOLDING
-blue_hsv_low = (100, 200, 0)
-blue_hsv_high = (180, 255, 255)
-yellow_hsv_low = (0, 200, 0)
-yellow_hsv_high = (80, 255, 190)
+blue_hsv = (0, 0, 0)
+yellow_hsv = (0, 0, 0)
+magenta_hsv = (0, 0, 0)
+red_hsv = (0, 0, 0)
+
+blue_hsv_low = (100, 100, 0)
+blue_hsv_high = (180, 200, 255)
+yellow_hsv_low = (120, 150, 0)
+yellow_hsv_high = (180, 210, 190)
 magenta_hsv_low = (200, 200, 0)
 magenta_hsv_high = (255, 255, 255)
 
 # BGR color fills for image edge
 blue_fill_col = (160, 90, 6)
 yellow_fill_col = (30, 170, 170)
-side_col_fill_dist = 3
+col_denoise_kernel_rad = 6
 
 # DENOISING/CLEANDING KERNELS
-colour_denoise_kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+colour_denoise_kernel = cv.getStructuringElement(
+    cv.MORPH_RECT, ((col_denoise_kernel_rad * 2) - 1, (col_denoise_kernel_rad * 2) - 1)
+)
 
 path_open_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
 path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
@@ -133,12 +141,13 @@ Kd = 0
 
 setpoint = 0
 
-# cap = cv.VideoCapture(0)
-# if not cap.isOpened():
-#     print("Cannot open camera")
-#     exit()
+cap = cv.VideoCapture(0)
+if not cap.isOpened():
+    print("Cannot open camera")
+    exit()
 
-picIn = cv.imread("test4.png")  # TODO TESTING ONLY
+# picIn = cv.imread("test4.png")  # TODO TESTING ONLY
+_, picIn = cap.read()
 
 rows, cols, channels = picIn.shape
 image_centre_x = int(cols / 2)
@@ -157,6 +166,14 @@ setpoint_px = int(image_centre_x + (setpoint * cols / 2))
 # FAILSAFE
 last_time_path_seen = time.time()
 
+# OPENCV WINDOW
+cv.namedWindow(window_title, cv.WINDOW_GUI_NORMAL)
+
+if not remote_display:
+    cv.moveWindow(window_title, 0, -20)
+cv.setMouseCallback(window_title, mouse_event)
+cv.createTrackbar("Path Xo", window_title, 200, 400, update_pcx)
+
 while True:
     key = cv.waitKey(1)
     process_key(key)
@@ -164,15 +181,15 @@ while True:
         break
 
     start_time = time.time()
-
     # IMAGE INPUT
-    input_frame = picIn.copy()
-    # ret, inputImg = cap.read()
-    # if ret == False:
-    #     break
+    # input_frame = picIn.copy()
+    ret, input_frame = cap.read()
+    if ret == False:
+        break
+    capture_time = time.time()
 
-    input_frame[:, 0:side_col_fill_dist] = blue_fill_col
-    input_frame[:, cols - side_col_fill_dist : cols] = yellow_fill_col
+    input_frame[:, 0:col_denoise_kernel_rad] = blue_fill_col
+    input_frame[:, cols - col_denoise_kernel_rad : cols] = yellow_fill_col
     hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
 
     # calculate thresholded masks for various colours
@@ -431,10 +448,10 @@ while True:
     )
     cv.line(
         display_frame,
-        (pathfinding_centre_x - horizontal_cutoff_dist_px, rows),
-        (pathfinding_centre_x + horizontal_cutoff_dist_px, rows),
+        (pathfinding_centre_x - horizontal_cutoff_dist_px, rows - 1),
+        (pathfinding_centre_x + horizontal_cutoff_dist_px, rows - 1),
         (255, 0, 255),
-        3,
+        4,
     )
     cv.drawMarker(
         display_frame,
@@ -523,10 +540,17 @@ while True:
             2,
         )
 
-    dt = end_time - start_time
-    time_ms = dt * 1000
-    fps = 1 / dt
-    rtext(display_frame, f"T:{time_ms:03.0f}ms FPS:{fps:03.0f}", (5, 150))
+    proc_dt = end_time - capture_time
+    full_dt = end_time - start_time
+    proc_time_ms = proc_dt * 1000
+    full_time_ms = proc_dt * 1000
+    fps = 1 / proc_dt
+    rtext(
+        display_frame,
+        f"P,F:{proc_time_ms:03.0f},{full_time_ms:03.0f} FPS:{fps:03.0f}",
+        (5, 150),
+        col=((0, 0, 0) if fps > 25 else (0, 0, 255)),
+    )
 
     display_frame = cv.resize(display_frame, (int(cols / 2), int(rows / 2)))
     cv.imshow(window_title, display_frame)

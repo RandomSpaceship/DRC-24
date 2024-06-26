@@ -5,7 +5,8 @@ import math
 import os
 
 remote_display = True
-
+# display_scale = 0.5
+display_scale = 1
 
 os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
@@ -15,7 +16,7 @@ window_title = "DRC Pathfinder"
 def mouse_event(event, x, y, flags, param):
     global mouseX, mouseY
     if event == cv.EVENT_MOUSEMOVE:
-        mouseX, mouseY = x, y
+        mouseX, mouseY = int(x / display_scale), int(y / display_scale)
 
 
 def process_key(key):
@@ -47,7 +48,7 @@ def process_key(key):
         currentlyShowing = -12
     if key == ord("g"):
         currentlyShowing = 0
-    if key == ord("H"):
+    if key == ord("n"):
         currentlyShowing = 1
     if key == ord("s"):
         currentlyShowing = 2
@@ -93,22 +94,17 @@ mouseX = 0
 mouseY = 0
 
 # THRESHOLDING
-blue_hsv = (0, 0, 0)
-yellow_hsv = (0, 0, 0)
+blue_hsv = (153, 180, 145)
+yellow_hsv = (35, 130, 125)
 magenta_hsv = (0, 0, 0)
 red_hsv = (0, 0, 0)
 
-blue_hsv_low = (100, 100, 0)
-blue_hsv_high = (180, 200, 255)
-yellow_hsv_low = (120, 150, 0)
-yellow_hsv_high = (180, 210, 190)
-magenta_hsv_low = (200, 200, 0)
-magenta_hsv_high = (255, 255, 255)
+hsv_thresh_range = (20, 50, 40)
 
 # BGR color fills for image edge
 blue_fill_col = (160, 90, 6)
 yellow_fill_col = (30, 170, 170)
-col_denoise_kernel_rad = 6
+col_denoise_kernel_rad = 3
 
 # DENOISING/CLEANDING KERNELS
 colour_denoise_kernel = cv.getStructuringElement(
@@ -116,12 +112,15 @@ colour_denoise_kernel = cv.getStructuringElement(
 )
 
 path_open_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
-path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
+# path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
+path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
 
 # PARAMETERS
 derivative_kernel_size = 21
 path_threshold_val = 90
 path_slice_height = 5
+
+initial_blur_size = 7
 
 # more image proportions
 # if absolute error is les
@@ -163,6 +162,29 @@ path_cutoff_height = rows - path_slice_height
 
 setpoint_px = int(image_centre_x + (setpoint * cols / 2))
 
+blue_hsv_low = np.array([pair[0] - pair[1] for pair in zip(blue_hsv, hsv_thresh_range)])
+blue_hsv_high = np.array(
+    [pair[0] + pair[1] for pair in zip(blue_hsv, hsv_thresh_range)]
+)
+
+yellow_hsv_low = np.array(
+    [pair[0] - pair[1] for pair in zip(yellow_hsv, hsv_thresh_range)]
+)
+yellow_hsv_high = np.array(
+    [pair[0] + pair[1] for pair in zip(yellow_hsv, hsv_thresh_range)]
+)
+
+magenta_hsv_low = np.array(
+    [pair[0] - pair[1] for pair in zip(magenta_hsv, hsv_thresh_range)]
+)
+magenta_hsv_high = np.array(
+    [pair[0] + pair[1] for pair in zip(magenta_hsv, hsv_thresh_range)]
+)
+
+red_hsv_low = [pair[0] - pair[1] for pair in zip(red_hsv, hsv_thresh_range)]
+red_hsv_high = [pair[0] + pair[1] for pair in zip(red_hsv, hsv_thresh_range)]
+
+
 # FAILSAFE
 last_time_path_seen = time.time()
 
@@ -187,6 +209,10 @@ while True:
     if ret == False:
         break
     capture_time = time.time()
+    # input_frame = cv.blur(input_frame, (initial_blur_size, initial_blur_size))
+    input_frame = cv.GaussianBlur(
+        input_frame, (initial_blur_size, initial_blur_size), 0
+    )
 
     input_frame[:, 0:col_denoise_kernel_rad] = blue_fill_col
     input_frame[:, cols - col_denoise_kernel_rad : cols] = yellow_fill_col
@@ -209,14 +235,14 @@ while True:
     # take second-order horizontal Sobel derivative of the image
     # This converts the "peaks" in the Voronoi diagram into significantly negative regions
     # or, after normalisation, local (and global!) minima
-    raw_derivative = cv.Sobel(
-        distance_plot, cv.CV_32F, 2, 0, ksize=derivative_kernel_size
-    )
+    # raw_derivative = cv.Sobel(
+    #     distance_plot, cv.CV_32F, 2, 0, ksize=derivative_kernel_size
+    # )
     # the Laplacian being the sum of horiz + vertical 2nd derivatives *looks* useful,
     # but is in fact quite slow and breaks a lot of stuff due to top and bottom edges
-    # raw_derivative = cv.Laplacian(
-    #     distance_plot, cv.CV_32F, ksize=derivative_kernel_size
-    # )
+    raw_derivative = cv.Laplacian(
+        distance_plot, cv.CV_32F, ksize=derivative_kernel_size
+    )
 
     # normalise the insane values that the derivative produces to u8 range
     normalised_horiz_derivative = cv.normalize(
@@ -233,15 +259,14 @@ while True:
     ) = cv.minMaxLoc(normalised_horiz_derivative, bottom_slice_mask)
 
     # threshold based on the minimum found gets us the "ridgelines" in the distance plot
-    raw_paths_mask = cv.inRange(
-        normalised_horiz_derivative, 0, minimum_derivative + path_threshold_val
-    )
+    raw_paths_mask = cv.inRange(normalised_horiz_derivative, 0, path_threshold_val)
     # opening (erode/dilate) removes the "strings" produced by the diagonal lines
-    denoised_paths_mask = cv.morphologyEx(
-        raw_paths_mask, cv.MORPH_OPEN, path_open_kernel
-    )
+    # denoised_paths_mask = cv.morphologyEx(
+    #     raw_paths_mask, cv.MORPH_OPEN, path_open_kernel
+    # )
     # finally a mostly-vertical dilation re-joins paths that sometimes split after the open operation
-    final_paths_mask = cv.dilate(denoised_paths_mask, path_dilate_kernel)
+    # final_paths_mask = cv.dilate(denoised_paths_mask, path_dilate_kernel)
+    final_paths_mask = cv.dilate(raw_paths_mask, path_dilate_kernel)
 
     # find all the contours - since they should all be separate lines and only one is chosen,
     # heirarchy can get thrown away
@@ -547,12 +572,15 @@ while True:
     fps = 1 / proc_dt
     rtext(
         display_frame,
-        f"P,F:{proc_time_ms:03.0f},{full_time_ms:03.0f} FPS:{fps:03.0f}",
+        # f"P,F:{proc_time_ms:03.0f},{full_time_ms:03.0f} FPS:{fps:03.0f}",
+        f"dt:{full_time_ms:03.0f}ms FPS:{fps:03.0f}",
         (5, 150),
         col=((0, 0, 0) if fps > 25 else (0, 0, 255)),
     )
 
-    display_frame = cv.resize(display_frame, (int(cols / 2), int(rows / 2)))
+    display_frame = cv.resize(
+        display_frame, (int(cols * display_scale), int(rows * display_scale))
+    )
     cv.imshow(window_title, display_frame)
 
 cv.destroyAllWindows()

@@ -267,6 +267,10 @@ while True:
     # finally a mostly-vertical dilation re-joins paths that sometimes split after the open operation
     # final_paths_mask = cv.dilate(denoised_paths_mask, path_dilate_kernel)
     final_paths_mask = cv.dilate(raw_paths_mask, path_dilate_kernel)
+    final_paths_mask[:, 0 : pathfinding_centre_x - horizontal_cutoff_dist_px] = 0
+    final_paths_mask[:, pathfinding_centre_x + horizontal_cutoff_dist_px : cols] = 0
+    final_paths_mask[rows - 5 : rows, :] = 0
+    final_paths_mask[rows - 5 : rows, :] = final_paths_mask[rows - 6, :]
 
     # find all the contours - since they should all be separate lines and only one is chosen,
     # heirarchy can get thrown away

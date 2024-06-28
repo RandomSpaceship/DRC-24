@@ -6,7 +6,7 @@ import os
 
 remote_display = True
 # display_scale = 0.5
-display_scale = 1
+display_scale = 2
 
 os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
@@ -16,7 +16,7 @@ window_title = "DRC Pathfinder"
 def mouse_event(event, x, y, flags, param):
     global mouseX, mouseY
     if event == cv.EVENT_MOUSEMOVE:
-        mouseX, mouseY = int(x / display_scale), int(y / display_scale)
+        mouseX, mouseY = int(x), int(y)
 
 
 def process_key(key):
@@ -94,16 +94,16 @@ mouseX = 0
 mouseY = 0
 
 # THRESHOLDING
-blue_hsv = (153, 180, 145)
-yellow_hsv = (35, 130, 125)
+blue_hsv = (150, 220, 130)
+yellow_hsv = (38, 98, 200)
 magenta_hsv = (0, 0, 0)
 red_hsv = (0, 0, 0)
 
-hsv_thresh_range = (20, 50, 40)
+hsv_thresh_range = (20, 50, 70)
 
 # BGR color fills for image edge
-blue_fill_col = (160, 90, 6)
-yellow_fill_col = (30, 170, 170)
+blue_fill_col = blue_hsv
+yellow_fill_col = yellow_hsv
 col_denoise_kernel_rad = 3
 
 # DENOISING/CLEANDING KERNELS
@@ -120,7 +120,7 @@ derivative_kernel_size = 21
 path_threshold_val = 90
 path_slice_height = 5
 
-initial_blur_size = 7
+initial_blur_size = 31
 
 # more image proportions
 # if absolute error is les
@@ -190,7 +190,7 @@ last_time_path_seen = time.time()
 
 # OPENCV WINDOW
 cv.namedWindow(window_title, cv.WINDOW_GUI_NORMAL)
-
+cv.resizeWindow(window_title, int(cols * display_scale), int(rows * display_scale))
 if not remote_display:
     cv.moveWindow(window_title, 0, -20)
 cv.setMouseCallback(window_title, mouse_event)
@@ -214,9 +214,9 @@ while True:
         input_frame, (initial_blur_size, initial_blur_size), 0
     )
 
-    input_frame[:, 0:col_denoise_kernel_rad] = blue_fill_col
-    input_frame[:, cols - col_denoise_kernel_rad : cols] = yellow_fill_col
     hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
+    hsvImg[:, 0:col_denoise_kernel_rad] = blue_fill_col
+    hsvImg[:, cols - col_denoise_kernel_rad : cols] = yellow_fill_col
 
     # calculate thresholded masks for various colours
     blue_mask = cv.inRange(hsvImg, blue_hsv_low, blue_hsv_high)
@@ -578,9 +578,9 @@ while True:
         col=((0, 0, 0) if fps > 25 else (0, 0, 255)),
     )
 
-    display_frame = cv.resize(
-        display_frame, (int(cols * display_scale), int(rows * display_scale))
-    )
+    # display_frame = cv.resize(
+    #     display_frame, (int(cols * display_scale), int(rows * display_scale))
+    # )
     cv.imshow(window_title, display_frame)
 
 cv.destroyAllWindows()

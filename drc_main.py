@@ -94,12 +94,12 @@ mouseX = 0
 mouseY = 0
 
 # THRESHOLDING
-blue_hsv = (150, 220, 130)
+blue_hsv = (150, 220, 170)
 yellow_hsv = (38, 98, 200)
 magenta_hsv = (0, 0, 0)
 red_hsv = (0, 0, 0)
 
-hsv_thresh_range = (20, 50, 70)
+hsv_thresh_range = (20, 50, 100)
 
 # BGR color fills for image edge
 blue_fill_col = blue_hsv
@@ -184,6 +184,30 @@ magenta_hsv_high = np.array(
 red_hsv_low = [pair[0] - pair[1] for pair in zip(red_hsv, hsv_thresh_range)]
 red_hsv_high = [pair[0] + pair[1] for pair in zip(red_hsv, hsv_thresh_range)]
 
+path_max_y_check = int(rows * 0.49)
+path_mask_widen_end_y = int(rows * 0.5)
+path_mask_widen_start_y = int(rows * 0.95)
+path_mask = np.zeros((rows, cols), np.uint8)
+path_mask_contour = np.array(
+    [
+        # [0, 0],
+        # [cols - 1, 0],
+        # [cols - 1, path_mask_y2],
+        # [0, path_mask_y1],
+        [pathfinding_centre_x - horizontal_cutoff_dist_px, rows - 1],
+        [pathfinding_centre_x - horizontal_cutoff_dist_px, path_mask_widen_start_y],
+        [0, path_mask_widen_end_y],
+        [0, path_max_y_check],
+        [cols - 1, path_max_y_check],
+        [cols - 1, path_mask_widen_end_y],
+        [pathfinding_centre_x + horizontal_cutoff_dist_px, path_mask_widen_start_y],
+        [pathfinding_centre_x + horizontal_cutoff_dist_px, rows - 1],
+    ],
+    dtype=np.int32,
+)
+path_mask_contour = path_mask_contour.reshape((-1, 1, 2))
+# cv.polylines(path_mask, [path_mask_contour], True, 255)
+cv.drawContours(path_mask, [path_mask_contour], 0, 255, -1)
 
 # FAILSAFE
 last_time_path_seen = time.time()
@@ -259,23 +283,21 @@ while True:
     ) = cv.minMaxLoc(normalised_horiz_derivative, bottom_slice_mask)
 
     # threshold based on the minimum found gets us the "ridgelines" in the distance plot
-    raw_paths_mask = cv.inRange(normalised_horiz_derivative, 0, path_threshold_val)
+    raw_paths_binary = cv.inRange(normalised_horiz_derivative, 0, path_threshold_val)
     # opening (erode/dilate) removes the "strings" produced by the diagonal lines
     # denoised_paths_mask = cv.morphologyEx(
     #     raw_paths_mask, cv.MORPH_OPEN, path_open_kernel
     # )
     # finally a mostly-vertical dilation re-joins paths that sometimes split after the open operation
     # final_paths_mask = cv.dilate(denoised_paths_mask, path_dilate_kernel)
-    final_paths_mask = cv.dilate(raw_paths_mask, path_dilate_kernel)
-    final_paths_mask[:, 0 : pathfinding_centre_x - horizontal_cutoff_dist_px] = 0
-    final_paths_mask[:, pathfinding_centre_x + horizontal_cutoff_dist_px : cols] = 0
-    final_paths_mask[rows - 5 : rows, :] = 0
-    final_paths_mask[rows - 5 : rows, :] = final_paths_mask[rows - 6, :]
+    final_paths_binary = cv.dilate(raw_paths_binary, path_dilate_kernel)
+    final_paths_binary = cv.bitwise_and(final_paths_binary, path_mask)
+    final_paths_binary[rows - 5 : rows, :] = final_paths_binary[rows - 6, :]
 
     # find all the contours - since they should all be separate lines and only one is chosen,
     # heirarchy can get thrown away
     contours, _ = cv.findContours(
-        final_paths_mask, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE
+        final_paths_binary, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE
     )
 
     # centroids = [None] * len(contours)
@@ -328,7 +350,7 @@ while True:
                 chosen_path_idx = i
 
     # create a mask image with only the selected path in it
-    chosen_path_mask = np.zeros_like(final_paths_mask)
+    chosen_path_binary = np.zeros_like(final_paths_binary)
 
     # pathfinding output vars
     current_path_x = pathfinding_centre_x
@@ -346,16 +368,16 @@ while True:
         path_lost = True
     else:
         last_time_path_seen = time.time()
-        cv.drawContours(chosen_path_mask, contours, chosen_path_idx, 255, cv.FILLED)
+        cv.drawContours(chosen_path_binary, contours, chosen_path_idx, 255, cv.FILLED)
 
         # and then slice that and use moments to get the x coordinates of the start and middle of the path
-        current_path_slice = chosen_path_mask[(rows - path_slice_height) : rows, :]
+        current_path_slice = chosen_path_binary[(rows - path_slice_height) : rows, :]
         current_path_moment = cv.moments(current_path_slice, True)
         current_path_x = int(
             current_path_moment["m10"] / (current_path_moment["m00"] + 1e-5)
         )
         future_path_slice_start = rows - future_path_offset_px
-        future_path_slice = chosen_path_mask[
+        future_path_slice = chosen_path_binary[
             future_path_slice_start : (future_path_slice_start + path_slice_height), :
         ]
         future_path_moment = cv.moments(
@@ -401,16 +423,16 @@ while True:
             display_frame = cv.cvtColor(normalised_horiz_derivative, cv.COLOR_GRAY2BGR)
         case -7:
             txt = "CPATH"
-            display_frame = cv.cvtColor(chosen_path_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(chosen_path_binary, cv.COLOR_GRAY2BGR)
         case -8:
             txt = "RPTM"
-            display_frame = cv.cvtColor(raw_paths_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(raw_paths_binary, cv.COLOR_GRAY2BGR)
         case -9:
             txt = "FPTM"
-            display_frame = cv.cvtColor(final_paths_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
         case -10:
             txt = "ALCTR"
-            display_frame = cv.cvtColor(final_paths_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
             cv.drawContours(display_frame, contours, -1, (0, 255, 0), 1, cv.LINE_AA)
             # for centroid in centroids:
             #     cv.drawMarker(
@@ -421,8 +443,11 @@ while True:
                     display_frame, (x, y), (x + w, y + h), (0, 0, 255), 2, cv.LINE_AA
                 )
         case -11:
+            txt = "MASK"
+            display_frame = cv.cvtColor(path_mask, cv.COLOR_GRAY2BGR)
+        case -12:
             txt = "PTCTR"
-            display_frame = cv.cvtColor(final_paths_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
 
             cv.drawContours(
                 display_frame,
@@ -500,8 +525,8 @@ while True:
     )
 
     # pixel is in BGR!
-    mouseX = min(max(mouseX, 0), cols)
-    mouseY = min(max(mouseY, 0), rows)
+    mouseX = min(max(mouseX, 0), cols - 1)
+    mouseY = min(max(mouseY, 0), rows - 1)
 
     # show some pixel info on mouse hover for debugging
     rgbPixel = input_frame[mouseY, mouseX]

@@ -4,8 +4,13 @@ import time
 import math
 import os
 
-remote_display = False
-display_scale = 1 if remote_display else 0.5
+remote_display = True
+# display_scale = 1 if remote_display else 0.5
+process_scale = 1
+# process_scale = 0.5
+# display_scale = 1 / process_scale
+display_scale = 0.5
+# process_scale = 1
 
 os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
@@ -149,8 +154,10 @@ if not cap.isOpened():
 
 # picIn = cv.imread("test4.png")  # TODO TESTING ONLY
 _, picIn = cap.read()
-
 rows, cols, channels = picIn.shape
+# rows = int(rows * process_scale)
+# cols = int(cols * process_scale)
+
 image_centre_x = int(cols / 2)
 image_centre_y = int(rows / 2)
 pathfinding_centre_x = image_centre_x
@@ -245,6 +252,7 @@ while True:
     # input_frame = cv.GaussianBlur(
     #     input_frame, (initial_blur_size, initial_blur_size), 0
     # )
+    input_frame = cv.resize(input_frame, (cols, rows))
 
     hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
     hsvImg[:, 0:col_denoise_kernel_rad] = blu_fill_col
@@ -270,8 +278,8 @@ while True:
     # raw_derivative = cv.Sobel(
     #     distance_plot, cv.CV_32F, 2, 0, ksize=derivative_kernel_size
     # )
-    # the Laplacian being the sum of horiz + vertical 2nd derivatives *looks* useful,
-    # but is in fact quite slow and breaks a lot of stuff due to top and bottom edges
+    # laplacian is just horiz + vertical 2nd order sobel added together
+    # allows it to handle sharp corners or U-turns better
     raw_derivative = cv.Laplacian(
         distance_plot, cv.CV_32F, ksize=derivative_kernel_size
     )

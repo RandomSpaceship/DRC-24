@@ -94,16 +94,19 @@ mouseX = 0
 mouseY = 0
 
 # THRESHOLDING
-blue_hsv = (150, 220, 170)
-yellow_hsv = (38, 98, 200)
-magenta_hsv = (0, 0, 0)
+blu_hsv = (150, 220, 170)
+ylw_hsv = (38, 98, 200)
+mgnta_hsv = (0, 0, 0)
 red_hsv = (0, 0, 0)
 
-hsv_thresh_range = (20, 50, 100)
+blu_hsv_thresh_range = (20, 50, 100)
+ylw_hsv_thresh_range = (20, 50, 50)
+mgnta_hsv_thresh_range = (0, 0, 0)
+red_hsv_thresh_range = (0, 0, 0)
 
 # BGR color fills for image edge
-blue_fill_col = blue_hsv
-yellow_fill_col = yellow_hsv
+blu_fill_col = blu_hsv
+ylw_fill_col = ylw_hsv
 col_denoise_kernel_rad = 3
 
 # DENOISING/CLEANDING KERNELS
@@ -162,27 +165,33 @@ path_cutoff_height = rows - path_slice_height
 
 setpoint_px = int(image_centre_x + (setpoint * cols / 2))
 
-blue_hsv_low = np.array([pair[0] - pair[1] for pair in zip(blue_hsv, hsv_thresh_range)])
-blue_hsv_high = np.array(
-    [pair[0] + pair[1] for pair in zip(blue_hsv, hsv_thresh_range)]
+blu_hsv_low = np.array(
+    [pair[0] - pair[1] for pair in zip(blu_hsv, blu_hsv_thresh_range)]
+)
+blu_hsv_high = np.array(
+    [pair[0] + pair[1] for pair in zip(blu_hsv, blu_hsv_thresh_range)]
 )
 
-yellow_hsv_low = np.array(
-    [pair[0] - pair[1] for pair in zip(yellow_hsv, hsv_thresh_range)]
+ylw_hsv_low = np.array(
+    [pair[0] - pair[1] for pair in zip(ylw_hsv, ylw_hsv_thresh_range)]
 )
-yellow_hsv_high = np.array(
-    [pair[0] + pair[1] for pair in zip(yellow_hsv, hsv_thresh_range)]
-)
-
-magenta_hsv_low = np.array(
-    [pair[0] - pair[1] for pair in zip(magenta_hsv, hsv_thresh_range)]
-)
-magenta_hsv_high = np.array(
-    [pair[0] + pair[1] for pair in zip(magenta_hsv, hsv_thresh_range)]
+ylw_hsv_high = np.array(
+    [pair[0] + pair[1] for pair in zip(ylw_hsv, ylw_hsv_thresh_range)]
 )
 
-red_hsv_low = [pair[0] - pair[1] for pair in zip(red_hsv, hsv_thresh_range)]
-red_hsv_high = [pair[0] + pair[1] for pair in zip(red_hsv, hsv_thresh_range)]
+mgnta_hsv_low = np.array(
+    [pair[0] - pair[1] for pair in zip(mgnta_hsv, mgnta_hsv_thresh_range)]
+)
+mgnta_hsv_high = np.array(
+    [pair[0] + pair[1] for pair in zip(mgnta_hsv, mgnta_hsv_thresh_range)]
+)
+
+red_hsv_low = np.array(
+    [pair[0] - pair[1] for pair in zip(red_hsv, red_hsv_thresh_range)]
+)
+red_hsv_high = np.array(
+    [pair[0] + pair[1] for pair in zip(red_hsv, red_hsv_thresh_range)]
+)
 
 path_max_y_check = int(rows * 0.49)
 path_mask_widen_end_y = int(rows * 0.5)
@@ -239,16 +248,16 @@ while True:
     )
 
     hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
-    hsvImg[:, 0:col_denoise_kernel_rad] = blue_fill_col
-    hsvImg[:, cols - col_denoise_kernel_rad : cols] = yellow_fill_col
+    hsvImg[:, 0:col_denoise_kernel_rad] = blu_fill_col
+    hsvImg[:, cols - col_denoise_kernel_rad : cols] = ylw_fill_col
 
     # calculate thresholded masks for various colours
-    blue_mask = cv.inRange(hsvImg, blue_hsv_low, blue_hsv_high)
-    yellow_mask = cv.inRange(hsvImg, yellow_hsv_low, yellow_hsv_high)
-    magenta_mask = cv.inRange(hsvImg, magenta_hsv_low, magenta_hsv_high)
+    blu_mask = cv.inRange(hsvImg, blu_hsv_low, blu_hsv_high)
+    ylw_mask = cv.inRange(hsvImg, ylw_hsv_low, ylw_hsv_high)
+    mgnta_mask = cv.inRange(hsvImg, mgnta_hsv_low, mgnta_hsv_high)
     # combine the masks
-    track_boundaries_mask = cv.bitwise_xor(yellow_mask, blue_mask)
-    avoid_mask = cv.bitwise_xor(track_boundaries_mask, magenta_mask)
+    track_boundaries_mask = cv.bitwise_xor(ylw_mask, blu_mask)
+    avoid_mask = cv.bitwise_xor(track_boundaries_mask, mgnta_mask)
     # and denoise
     avoid_mask = cv.morphologyEx(avoid_mask, cv.MORPH_OPEN, colour_denoise_kernel)
 
@@ -397,13 +406,13 @@ while True:
     match currentlyShowing:
         case -1:
             txt = "BLU"
-            display_frame = cv.cvtColor(blue_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(blu_mask, cv.COLOR_GRAY2BGR)
         case -2:
             txt = "YLW"
-            display_frame = cv.cvtColor(yellow_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(ylw_mask, cv.COLOR_GRAY2BGR)
         case -3:
             txt = "MAG"
-            display_frame = cv.cvtColor(magenta_mask, cv.COLOR_GRAY2BGR)
+            display_frame = cv.cvtColor(mgnta_mask, cv.COLOR_GRAY2BGR)
         case -4:
             txt = "CMB"
             display_frame = cv.cvtColor(avoid_mask, cv.COLOR_GRAY2BGR)

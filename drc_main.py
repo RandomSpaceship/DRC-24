@@ -4,9 +4,8 @@ import time
 import math
 import os
 
-remote_display = True
-# display_scale = 0.5
-display_scale = 2
+remote_display = False
+display_scale = 1 if remote_display else 0.5
 
 os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
@@ -95,12 +94,12 @@ mouseY = 0
 
 # THRESHOLDING
 blu_hsv = (150, 220, 170)
-ylw_hsv = (38, 98, 200)
+ylw_hsv = (35, 110, 180)
 mgnta_hsv = (0, 0, 0)
 red_hsv = (0, 0, 0)
 
 blu_hsv_thresh_range = (20, 50, 100)
-ylw_hsv_thresh_range = (20, 50, 50)
+ylw_hsv_thresh_range = (20, 50, 70)
 mgnta_hsv_thresh_range = (0, 0, 0)
 red_hsv_thresh_range = (0, 0, 0)
 
@@ -116,7 +115,7 @@ colour_denoise_kernel = cv.getStructuringElement(
 
 path_open_kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5))
 # path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 11))
-path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5))
+path_dilate_kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 3))
 
 # PARAMETERS
 derivative_kernel_size = 21
@@ -243,9 +242,9 @@ while True:
         break
     capture_time = time.time()
     # input_frame = cv.blur(input_frame, (initial_blur_size, initial_blur_size))
-    input_frame = cv.GaussianBlur(
-        input_frame, (initial_blur_size, initial_blur_size), 0
-    )
+    # input_frame = cv.GaussianBlur(
+    #     input_frame, (initial_blur_size, initial_blur_size), 0
+    # )
 
     hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
     hsvImg[:, 0:col_denoise_kernel_rad] = blu_fill_col
@@ -452,9 +451,6 @@ while True:
                     display_frame, (x, y), (x + w, y + h), (0, 0, 255), 2, cv.LINE_AA
                 )
         case -11:
-            txt = "MASK"
-            display_frame = cv.cvtColor(path_mask, cv.COLOR_GRAY2BGR)
-        case -12:
             txt = "PTCTR"
             display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
 
@@ -475,6 +471,9 @@ while True:
                     2,
                     cv.LINE_AA,
                 )
+        case -12:
+            txt = "MASK"
+            display_frame = cv.cvtColor(path_mask, cv.COLOR_GRAY2BGR)
         case 0:
             txt = "RGB"
             display_frame = input_frame

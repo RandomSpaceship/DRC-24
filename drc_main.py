@@ -5,6 +5,7 @@ import math
 import os
 import platform
 from enum import IntEnum
+from multiprocessing import Queue, Pool, Process
 
 is_on_pc = platform.system() == "Windows"
 remote_display = False or is_on_pc
@@ -309,10 +310,10 @@ while True:
     )
     # laplacian is just horiz + vertical 2nd order sobel added together
     # allows it to handle sharp corners or U-turns better
-    # raw_derivative = raw_horz_derivative + raw_vert_derivative
-    raw_derivative = cv.Laplacian(
-        distance_plot, cv.CV_32F, ksize=derivative_kernel_size
-    )
+    raw_derivative = (raw_horz_derivative * 1.1) + (raw_vert_derivative * 1)
+    # raw_derivative = cv.Laplacian(
+    #     distance_plot, cv.CV_32F, ksize=derivative_kernel_size
+    # )
 
     # normalise the insane values that the derivative produces to u8 range
     normalised_derivative = cv.normalize(
@@ -529,6 +530,14 @@ while True:
         case DisplayMode.FINAL_PATHS:
             txt = "FNL PATHS"
             display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
+            cv.drawContours(
+                display_frame,
+                contours,
+                chosen_path_idx,
+                (255, 255, 0),
+                -1,
+                cv.LINE_AA,
+            )
             for i in potential_path_contours:
                 cv.drawContours(
                     display_frame,
@@ -538,14 +547,6 @@ while True:
                     2,
                     cv.LINE_AA,
                 )
-            cv.drawContours(
-                display_frame,
-                contours,
-                chosen_path_idx,
-                (255, 255, 0),
-                -1,
-                cv.LINE_AA,
-            )
         case DisplayMode.CHOSEN_PATH:
             txt = "CSN PATH"
             display_frame = cv.cvtColor(chosen_path_binary, cv.COLOR_GRAY2BGR)

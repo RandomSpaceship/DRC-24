@@ -5,7 +5,7 @@ import math
 import os
 import platform
 from enum import IntEnum
-from multiprocessing import Process, Pipe
+from multiprocessing import Process, Value
 
 is_on_pc = platform.system() == "Windows"
 remote_display = False or is_on_pc
@@ -119,7 +119,25 @@ def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
     )
 
 
+def serial_io_loop(current_error, future_error, kill):
+    while not kill.value:
+        exec_start = time.time()
+        print(f"{current_error.value:+01.3f}, {future_error.value:+01.3f}")
+        exec_end = time.time()
+        dt = exec_end - exec_start
+        time.sleep((1 / 10) - dt)
+
+
 if __name__ == "__main__":
+    print("\r\n\r\n")
+    current_error_val = Value("d", 0)
+    future_error_val = Value("d", 0)
+    serial_should_stop = Value("i", 0)
+    serial_io_thread = Process(
+        target=serial_io_loop,
+        args=(current_error_val, future_error_val, serial_should_stop),
+    )
+    serial_io_thread.start()
     # DEBUGGING + DISPLAY
     current_display_mode = DisplayMode.RGB
 
@@ -137,13 +155,11 @@ if __name__ == "__main__":
     mgnta_hsv_thresh_range = (0, 0, 0)
     red_hsv_thresh_range = (0, 0, 0)
 
-    # BGR color fills for image edge
-    blu_fill_col = blu_hsv
-    ylw_fill_col = ylw_hsv
     col_denoise_kernel_rad = 4
+    edge_fill_height = 0.1
 
     # DENOISING/CLEANDING KERNELS
-    colour_denoise_kernel = cv.getStructuringElement(
+    color_denoise_kernel = cv.getStructuringElement(
         cv.MORPH_RECT,
         ((col_denoise_kernel_rad * 2) - 1, (col_denoise_kernel_rad * 2) - 1),
     )
@@ -155,7 +171,7 @@ if __name__ == "__main__":
     # PARAMETERS
     derivative_kernel_size = 21
     path_threshold_val = 90
-    path_slice_height = 5
+    path_slice_height_px = 10
 
     initial_blur_size = 31
 
@@ -166,10 +182,12 @@ if __name__ == "__main__":
     # filtering/slicing image proportions
     horizontal_cutoff_dist = 0.5
     future_path_height = 0.35
-    path_min_area_proportion = 0.02 * 0.1
+    path_min_area_proportion = 0.01 * 0.1
+    color_min_area_proportion = 0.1 * 0.1
+    no_col_detect_error = 0.3
 
     # robot config parameters
-    path_failsafe_time = 0.5  # TODO
+    path_failsafe_time = 0.3
 
     Kp = 1
     Ki = 0
@@ -194,10 +212,14 @@ if __name__ == "__main__":
     horizontal_cutoff_dist_px = int(horizontal_cutoff_dist * cols / 2)
     future_path_offset_px = int(rows * future_path_height)
     path_minimum_area = int(path_min_area_proportion * rows * cols)
+    color_min_area = int(color_min_area_proportion * rows * cols)
+    no_col_detect_error_px = int(cols * no_col_detect_error)
 
     bottom_slice_mask = np.zeros((rows, cols), np.uint8)
-    bottom_slice_mask[rows - path_slice_height : rows, :] = 1
-    path_cutoff_height = rows - path_slice_height
+    bottom_slice_mask[rows - path_slice_height_px : rows, :] = 1
+    path_cutoff_height = rows - path_slice_height_px
+    bottom_row_clear_px = 5
+    edge_fill_height_px = int(rows * edge_fill_height)
 
     setpoint_px = int(image_centre_x + (setpoint * cols / 2))
 
@@ -286,18 +308,24 @@ if __name__ == "__main__":
         input_frame = cv.resize(input_frame, (cols, rows))
 
         hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
-        hsvImg[:, 0:col_denoise_kernel_rad] = blu_fill_col
-        hsvImg[:, cols - col_denoise_kernel_rad : cols] = ylw_fill_col
 
-        # calculate thresholded masks for various colours
+        # calculate thresholded masks for various colors
         blu_mask = cv.inRange(hsvImg, blu_hsv_low, blu_hsv_high)
+        blu_detected = cv.countNonZero(blu_mask) > color_min_area
+        blu_mask[rows - edge_fill_height_px : rows, 0 : col_denoise_kernel_rad + 1] = (
+            255
+        )
         ylw_mask = cv.inRange(hsvImg, ylw_hsv_low, ylw_hsv_high)
+        ylw_detected = cv.countNonZero(ylw_mask) > color_min_area
+        ylw_mask[
+            rows - edge_fill_height_px : rows, cols - col_denoise_kernel_rad - 1 : cols
+        ] = 255
         mgnta_mask = cv.inRange(hsvImg, mgnta_hsv_low, mgnta_hsv_high)
         # combine the masks
         track_boundaries_mask = cv.bitwise_xor(ylw_mask, blu_mask)
         avoid_mask = cv.bitwise_xor(track_boundaries_mask, mgnta_mask)
         # and denoise
-        avoid_mask = cv.morphologyEx(avoid_mask, cv.MORPH_OPEN, colour_denoise_kernel)
+        avoid_mask = cv.morphologyEx(avoid_mask, cv.MORPH_OPEN, color_denoise_kernel)
 
         # distanceTransform gives distance from nearest *zero pixel*, not from nearest *white* pixel, so it needs to be inverted
         # ksize 3 gives really bad results for some reason even though it is slightly faster
@@ -343,7 +371,9 @@ if __name__ == "__main__":
         # final_paths_mask = cv.dilate(denoised_paths_mask, path_dilate_kernel)
         final_paths_binary = cv.dilate(raw_paths_binary, path_dilate_kernel)
         final_paths_binary = cv.bitwise_and(final_paths_binary, path_mask)
-        final_paths_binary[rows - 5 : rows, :] = final_paths_binary[rows - 6, :]
+        final_paths_binary[rows - bottom_row_clear_px : rows, :] = final_paths_binary[
+            rows - bottom_row_clear_px - 1, :
+        ]
 
         # find all the contours - since they should all be separate lines and only one is chosen,
         # heirarchy can get thrown away
@@ -425,7 +455,7 @@ if __name__ == "__main__":
 
             # and then slice that and use moments to get the x coordinates of the start and middle of the path
             current_path_slice = chosen_path_binary[
-                (rows - path_slice_height) : rows, :
+                (rows - path_slice_height_px) : rows, :
             ]
             current_path_moment = cv.moments(current_path_slice, True)
             current_path_x = int(
@@ -433,7 +463,9 @@ if __name__ == "__main__":
             )
             future_path_slice_start = rows - future_path_offset_px
             future_path_slice = chosen_path_binary[
-                future_path_slice_start : (future_path_slice_start + path_slice_height),
+                future_path_slice_start : (
+                    future_path_slice_start + path_slice_height_px
+                ),
                 :,
             ]
             future_path_moment = cv.moments(
@@ -571,8 +603,15 @@ if __name__ == "__main__":
                 txt = "Dflt"
                 display_frame = input_frame
 
-        main_path_error_px = current_path_x - setpoint_px
+        current_path_error_px = current_path_x - setpoint_px
         future_path_error_px = future_path_x - current_path_x
+        if not blu_detected:
+            current_path_error_px = current_path_error_px + no_col_detect_error_px
+        if not ylw_detected:
+            current_path_error_px = current_path_error_px - no_col_detect_error_px
+
+        current_error_val.value = current_path_error_px / cols
+        future_error_val.value = future_path_error_px / cols
 
         # draw calculated pathfinding markers on final image
         cv.line(
@@ -640,9 +679,27 @@ if __name__ == "__main__":
         )
         render_text(
             display_frame,
-            f"ERR: {main_path_error_px:+04.0f} {future_path_error_px:+04.0f}",
+            f"ERR: {current_path_error_px:+04.0f} {future_path_error_px:+04.0f}",
             (5, 240),
         )
+        if not (blu_detected or ylw_detected):
+            render_text(
+                display_frame,
+                f"NO TRACK!",
+                (5, 270),
+            )
+        elif blu_detected and not ylw_detected:
+            render_text(
+                display_frame,
+                f"NO YELW!",
+                (5, 270),
+            )
+        elif ylw_detected and not blu_detected:
+            render_text(
+                display_frame,
+                f"NO BLUE!",
+                (5, 270),
+            )
 
         warn_text = ""
         if short_path_warn:
@@ -694,5 +751,7 @@ if __name__ == "__main__":
         # )
         cv.imshow(window_title, display_frame)
 
+    serial_should_stop.value = 1
     cv.destroyAllWindows()
     cap.release()
+    serial_io_thread.join()

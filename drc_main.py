@@ -5,7 +5,7 @@ import math
 import os
 import platform
 from enum import IntEnum
-from multiprocessing import Queue, Pool, Process
+from multiprocessing import Process, Pipe
 
 is_on_pc = platform.system() == "Windows"
 remote_display = False or is_on_pc
@@ -43,57 +43,57 @@ class DisplayMode(IntEnum):
 
 
 def mouse_event(event, x, y, flags, param):
-    global mouseX, mouseY
+    global mouse_x, mouse_y
     if event == cv.EVENT_MOUSEMOVE:
-        mouseX, mouseY = int(x), int(y)
+        mouse_x, mouse_y = int(x), int(y)
 
 
 def process_key(key):
-    global currentlyShowing
+    global current_display_mode
 
     if key == ord("g"):
-        currentlyShowing = DisplayMode.RGB
+        current_display_mode = DisplayMode.RGB
     if key == ord("h"):
-        currentlyShowing = DisplayMode.HUE
+        current_display_mode = DisplayMode.HUE
     if key == ord("j"):
-        currentlyShowing = DisplayMode.SAT
+        current_display_mode = DisplayMode.SAT
     if key == ord("k"):
-        currentlyShowing = DisplayMode.VAL
+        current_display_mode = DisplayMode.VAL
     if key == ord("l"):
-        currentlyShowing = DisplayMode.HSV
+        current_display_mode = DisplayMode.HSV
     if key == ord("1"):
-        currentlyShowing = DisplayMode.MASK_BLUE
+        current_display_mode = DisplayMode.MASK_BLUE
     if key == ord("2"):
-        currentlyShowing = DisplayMode.MASK_YELLOW
+        current_display_mode = DisplayMode.MASK_YELLOW
     if key == ord("3"):
-        currentlyShowing = DisplayMode.MASK_MAGENTA
+        current_display_mode = DisplayMode.MASK_MAGENTA
     if key == ord("4"):
-        currentlyShowing = DisplayMode.MASK_RED
+        current_display_mode = DisplayMode.MASK_RED
     if key == ord("5"):
-        currentlyShowing = DisplayMode.MASK_COMBINED
+        current_display_mode = DisplayMode.MASK_COMBINED
     if key == ord("6"):
-        currentlyShowing = DisplayMode.MASK_PATH
+        current_display_mode = DisplayMode.MASK_PATH
     if key == ord("a"):
-        currentlyShowing = DisplayMode.VORONOI_DIST
+        current_display_mode = DisplayMode.VORONOI_DIST
     if key == ord("s"):
-        currentlyShowing = DisplayMode.H_SOBOL
+        current_display_mode = DisplayMode.H_SOBOL
     if key == ord("d"):
-        currentlyShowing = DisplayMode.V_SOBOL
+        current_display_mode = DisplayMode.V_SOBOL
     if key == ord("f"):
-        currentlyShowing = DisplayMode.COMBINED_DERIV
+        current_display_mode = DisplayMode.COMBINED_DERIV
     if key == ord("z"):
-        currentlyShowing = DisplayMode.RAW_PATHS
+        current_display_mode = DisplayMode.RAW_PATHS
     if key == ord("x"):
-        currentlyShowing = DisplayMode.DENOISED_PATHS
+        current_display_mode = DisplayMode.DENOISED_PATHS
     if key == ord("c"):
-        currentlyShowing = DisplayMode.FINAL_PATHS
+        current_display_mode = DisplayMode.FINAL_PATHS
     if key == ord("v"):
-        currentlyShowing = DisplayMode.CHOSEN_PATH
+        current_display_mode = DisplayMode.CHOSEN_PATH
     if key == ord("b"):
-        currentlyShowing = DisplayMode.CONTOURS
+        current_display_mode = DisplayMode.CONTOURS
 
 
-def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
+def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
     scale = scale * process_scale
     (x, y) = org
     org = (int(x * process_scale), int(y * process_scale))
@@ -120,10 +120,10 @@ def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
 
 
 # DEBUGGING + DISPLAY
-currentlyShowing = DisplayMode.RGB
+current_display_mode = DisplayMode.RGB
 
-mouseX = 0
-mouseY = 0
+mouse_x = 0
+mouse_y = 0
 
 # THRESHOLDING
 blu_hsv = (150, 220, 170)
@@ -139,7 +139,7 @@ red_hsv_thresh_range = (0, 0, 0)
 # BGR color fills for image edge
 blu_fill_col = blu_hsv
 ylw_fill_col = ylw_hsv
-col_denoise_kernel_rad = 3
+col_denoise_kernel_rad = 4
 
 # DENOISING/CLEANDING KERNELS
 colour_denoise_kernel = cv.getStructuringElement(
@@ -275,10 +275,12 @@ while True:
     if ret == False:
         break
     capture_time = time.time()
+    # no need to blur if the camera's defocused!
     # input_frame = cv.blur(input_frame, (initial_blur_size, initial_blur_size))
     # input_frame = cv.GaussianBlur(
     #     input_frame, (initial_blur_size, initial_blur_size), 0
     # )
+    # scale image down to reduce processing time at the cost of error resolution
     input_frame = cv.resize(input_frame, (cols, rows))
 
     hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
@@ -441,7 +443,7 @@ while True:
     end_time = time.time()
 
     # RENDERING
-    match currentlyShowing:
+    match current_display_mode:
         case DisplayMode.RGB:
             txt = "RGB"
             display_frame = input_frame
@@ -591,38 +593,38 @@ while True:
     )
 
     # pixel is in BGR!
-    mouseX = min(max(mouseX, 0), cols - 1)
-    mouseY = min(max(mouseY, 0), rows - 1)
+    mouse_x = min(max(mouse_x, 0), cols - 1)
+    mouse_y = min(max(mouse_y, 0), rows - 1)
 
     # show some pixel info on mouse hover for debugging
-    rgbPixel = input_frame[mouseY, mouseX]
-    hsvPixel = hsvImg[mouseY, mouseX]
-    samplePixel = display_frame[mouseY, mouseX]
+    rgbPixel = input_frame[mouse_y, mouse_x]
+    hsvPixel = hsvImg[mouse_y, mouse_x]
+    samplePixel = display_frame[mouse_y, mouse_x]
 
     # render debug info
-    rtext(display_frame, txt, (5, 30))
-    rtext(
+    render_text(display_frame, txt, (5, 30))
+    render_text(
         display_frame,
-        f"X:{mouseX:04d}, Y:{mouseY:04d}",
+        f"X:{mouse_x:04d}, Y:{mouse_y:04d}",
         (5, 60),
     )
-    rtext(
+    render_text(
         display_frame,
         f"R{rgbPixel[2]:03d} G{rgbPixel[1]:03d} B{rgbPixel[0]:03d}",
         (5, 90),
     )
-    rtext(
+    render_text(
         display_frame,
         f"H{hsvPixel[0]:03d} S{hsvPixel[1]:03d} V{hsvPixel[2]:03d}",
         (5, 120),
     )
-    rtext(display_frame, f"W:{cols} H:{rows}", (5, 180))
-    rtext(
+    render_text(display_frame, f"W:{cols} H:{rows}", (5, 180))
+    render_text(
         display_frame,
         f"R{samplePixel[2]:03.0f} G{samplePixel[1]:03.0f} B{samplePixel[0]:03.0f}",
         (5, 210),
     )
-    rtext(
+    render_text(
         display_frame,
         f"ERR: {main_path_error_px:+04.0f} {future_path_error_px:+04.0f}",
         (5, 240),
@@ -633,7 +635,7 @@ while True:
         warn_text = "NO FUTURE PATH"
 
     if len(warn_text) > 0:
-        rtext(
+        render_text(
             display_frame,
             f"WARN: {warn_text.upper()}",
             (5, 270),
@@ -642,7 +644,7 @@ while True:
         )
 
     if should_stop:
-        rtext(
+        render_text(
             display_frame,
             f"PATH LOSS TIMEOUT - STOP",
             (5, image_centre_y),
@@ -651,7 +653,7 @@ while True:
             2,
         )
     elif path_lost:
-        rtext(
+        render_text(
             display_frame,
             f"PATH LOST",
             (5, image_centre_y),
@@ -665,7 +667,7 @@ while True:
     proc_time_ms = proc_dt * 1000
     full_time_ms = proc_dt * 1000
     fps = 1 / proc_dt
-    rtext(
+    render_text(
         display_frame,
         # f"P,F:{proc_time_ms:03.0f},{full_time_ms:03.0f} FPS:{fps:03.0f}",
         f"dt:{full_time_ms:03.0f}ms FPS:{fps:03.0f}",

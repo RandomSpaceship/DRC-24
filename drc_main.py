@@ -3,16 +3,42 @@ import numpy as np
 import time
 import math
 import os
+import platform
+from enum import IntEnum
 
-remote_display = False
-process_scale = math.sqrt(1 / 2)
-# process_scale = 0.5
+is_on_pc = platform.system() == "Windows"
+remote_display = False or is_on_pc
+
+process_scale = 1 if is_on_pc else math.sqrt(1 / 2)
 display_scale = 1 / process_scale
 display_scale = display_scale * (1 if remote_display else 0.5)
 
 os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
 window_title = "DRC Pathfinder"
+
+
+class DisplayMode(IntEnum):
+    RGB = 0
+    HUE = 1
+    SAT = 2
+    VAL = 3
+    HSV = 4
+    MASK_BLUE = -1
+    MASK_YELLOW = -2
+    MASK_MAGENTA = -3
+    MASK_RED = -4
+    MASK_COMBINED = -5
+    MASK_PATH = -6
+    VORONOI_DIST = -10
+    H_SOBOL = -11
+    V_SOBOL = -12
+    COMBINED_DERIV = -13
+    RAW_PATHS = -20
+    DENOISED_PATHS = -21
+    FINAL_PATHS = -22
+    CHOSEN_PATH = -23
+    CONTOURS = -24
 
 
 def mouse_event(event, x, y, flags, param):
@@ -24,46 +50,46 @@ def mouse_event(event, x, y, flags, param):
 def process_key(key):
     global currentlyShowing
 
-    if key == ord("1"):
-        currentlyShowing = -1
-    if key == ord("2"):
-        currentlyShowing = -2
-    if key == ord("3"):
-        currentlyShowing = -3
-    if key == ord("4"):
-        currentlyShowing = -4
-    if key == ord("5"):
-        currentlyShowing = -5
-    if key == ord("6"):
-        currentlyShowing = -6
-    if key == ord("7"):
-        currentlyShowing = -7
-    if key == ord("8"):
-        currentlyShowing = -8
-    if key == ord("9"):
-        currentlyShowing = -9
-    if key == ord("0"):
-        currentlyShowing = -10
-    if key == ord("-"):
-        currentlyShowing = -11
-    if key == ord("="):
-        currentlyShowing = -12
     if key == ord("g"):
-        currentlyShowing = 0
-    if key == ord("n"):
-        currentlyShowing = 1
-    if key == ord("s"):
-        currentlyShowing = 2
-    if key == ord("v"):
-        currentlyShowing = 3
+        currentlyShowing = DisplayMode.RGB
     if key == ord("h"):
-        currentlyShowing = 4
-
-
-def update_pcx(val):
-    global pathfinding_centre_x
-    global image_centre_x
-    pathfinding_centre_x = image_centre_x + (val - 200)
+        currentlyShowing = DisplayMode.HUE
+    if key == ord("j"):
+        currentlyShowing = DisplayMode.SAT
+    if key == ord("k"):
+        currentlyShowing = DisplayMode.VAL
+    if key == ord("l"):
+        currentlyShowing = DisplayMode.HSV
+    if key == ord("1"):
+        currentlyShowing = DisplayMode.MASK_BLUE
+    if key == ord("2"):
+        currentlyShowing = DisplayMode.MASK_YELLOW
+    if key == ord("3"):
+        currentlyShowing = DisplayMode.MASK_MAGENTA
+    if key == ord("4"):
+        currentlyShowing = DisplayMode.MASK_RED
+    if key == ord("5"):
+        currentlyShowing = DisplayMode.MASK_COMBINED
+    if key == ord("6"):
+        currentlyShowing = DisplayMode.MASK_PATH
+    if key == ord("a"):
+        currentlyShowing = DisplayMode.VORONOI_DIST
+    if key == ord("s"):
+        currentlyShowing = DisplayMode.H_SOBOL
+    if key == ord("d"):
+        currentlyShowing = DisplayMode.V_SOBOL
+    if key == ord("f"):
+        currentlyShowing = DisplayMode.COMBINED_DERIV
+    if key == ord("z"):
+        currentlyShowing = DisplayMode.RAW_PATHS
+    if key == ord("x"):
+        currentlyShowing = DisplayMode.DENOISED_PATHS
+    if key == ord("c"):
+        currentlyShowing = DisplayMode.FINAL_PATHS
+    if key == ord("v"):
+        currentlyShowing = DisplayMode.CHOSEN_PATH
+    if key == ord("b"):
+        currentlyShowing = DisplayMode.CONTOURS
 
 
 def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
@@ -77,7 +103,7 @@ def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
         cv.FONT_HERSHEY_SIMPLEX,
         scale,
         border,
-        int(4 * scale),
+        math.ceil(3 * scale),
         cv.LINE_AA,
     )
     cv.putText(
@@ -87,13 +113,13 @@ def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
         cv.FONT_HERSHEY_SIMPLEX,
         scale,
         col,
-        int(2 * scale),
+        math.ceil(1 * scale),
         cv.LINE_AA,
     )
 
 
 # DEBUGGING + DISPLAY
-currentlyShowing = 0
+currentlyShowing = DisplayMode.RGB
 
 mouseX = 0
 mouseY = 0
@@ -234,7 +260,6 @@ cv.resizeWindow(window_title, int(cols * display_scale), int(rows * display_scal
 if not remote_display:
     cv.moveWindow(window_title, 0, -20)
 cv.setMouseCallback(window_title, mouse_event)
-# cv.createTrackbar("Path Xo", window_title, 200, 400, update_pcx)
 
 while True:
     key = cv.waitKey(1)
@@ -276,17 +301,21 @@ while True:
     # take second-order horizontal Sobel derivative of the image
     # This converts the "peaks" in the Voronoi diagram into significantly negative regions
     # or, after normalisation, local (and global!) minima
-    # raw_derivative = cv.Sobel(
-    #     distance_plot, cv.CV_32F, 2, 0, ksize=derivative_kernel_size
-    # )
+    raw_horz_derivative = cv.Sobel(
+        distance_plot, cv.CV_32F, 2, 0, ksize=derivative_kernel_size
+    )
+    raw_vert_derivative = cv.Sobel(
+        distance_plot, cv.CV_32F, 0, 2, ksize=derivative_kernel_size
+    )
     # laplacian is just horiz + vertical 2nd order sobel added together
     # allows it to handle sharp corners or U-turns better
+    # raw_derivative = raw_horz_derivative + raw_vert_derivative
     raw_derivative = cv.Laplacian(
         distance_plot, cv.CV_32F, ksize=derivative_kernel_size
     )
 
     # normalise the insane values that the derivative produces to u8 range
-    normalised_horiz_derivative = cv.normalize(
+    normalised_derivative = cv.normalize(
         raw_derivative, None, 0, 255, cv.NORM_MINMAX, cv.CV_8UC1
     )
     # only the minimum is needed, but maybe in the future use the coords output to auto-choose the best path?
@@ -297,10 +326,10 @@ while True:
         maximum_derivative,
         minimum_derivative_coords,
         maximum_derivative_coords,
-    ) = cv.minMaxLoc(normalised_horiz_derivative, bottom_slice_mask)
+    ) = cv.minMaxLoc(normalised_derivative, bottom_slice_mask)
 
     # threshold based on the minimum found gets us the "ridgelines" in the distance plot
-    raw_paths_binary = cv.inRange(normalised_horiz_derivative, 0, path_threshold_val)
+    raw_paths_binary = cv.inRange(normalised_derivative, 0, path_threshold_val)
     # opening (erode/dilate) removes the "strings" produced by the diagonal lines
     # denoised_paths_mask = cv.morphologyEx(
     #     raw_paths_mask, cv.MORPH_OPEN, path_open_kernel
@@ -412,19 +441,47 @@ while True:
 
     # RENDERING
     match currentlyShowing:
-        case -1:
-            txt = "BLU"
+        case DisplayMode.RGB:
+            txt = "RGB"
+            display_frame = input_frame
+        case DisplayMode.HUE:
+            txt = "Hue"
+            hsvHueOnly = hsvImg.copy()
+            hsvHueOnly[:, :, 1] = 255
+            hsvHueOnly[:, :, 2] = 255
+            hsvHueOnly = cv.cvtColor(hsvHueOnly, cv.COLOR_HSV2BGR_FULL)
+            display_frame = hsvHueOnly
+        case DisplayMode.SAT:
+            txt = "Sat"
+            display_frame = cv.cvtColor(hsvImg[:, :, 1], cv.COLOR_GRAY2BGR)
+        case DisplayMode.VAL:
+            txt = "Val"
+            display_frame = cv.cvtColor(hsvImg[:, :, 2], cv.COLOR_GRAY2BGR)
+        case DisplayMode.HSV:
+            txt = "HSV"
+            display_frame = hsvImg
+
+        case DisplayMode.MASK_BLUE:
+            txt = "BLU MASK"
             display_frame = cv.cvtColor(blu_mask, cv.COLOR_GRAY2BGR)
-        case -2:
-            txt = "YLW"
+        case DisplayMode.MASK_YELLOW:
+            txt = "YLW MASK"
             display_frame = cv.cvtColor(ylw_mask, cv.COLOR_GRAY2BGR)
-        case -3:
-            txt = "MAG"
+        case DisplayMode.MASK_MAGENTA:
+            txt = "MAG MASK"
             display_frame = cv.cvtColor(mgnta_mask, cv.COLOR_GRAY2BGR)
-        case -4:
-            txt = "CMB"
+        case DisplayMode.MASK_RED:
+            txt = "RED MSK"
             display_frame = cv.cvtColor(avoid_mask, cv.COLOR_GRAY2BGR)
-        case -5:
+            # display_frame = cv.cvtColor(red_mask, cv.COLOR_GRAY2BGR) # TODO
+        case DisplayMode.MASK_COMBINED:
+            txt = "CMB MSK"
+            display_frame = cv.cvtColor(avoid_mask, cv.COLOR_GRAY2BGR)
+        case DisplayMode.MASK_PATH:
+            txt = "PATH MASK"
+            display_frame = cv.cvtColor(path_mask, cv.COLOR_GRAY2BGR)
+
+        case DisplayMode.VORONOI_DIST:
             txt = "DIST"
             combinedDistFrame = cv.normalize(
                 distance_plot,
@@ -435,42 +492,43 @@ while True:
                 cv.CV_8UC1,
             )
             display_frame = cv.cvtColor(combinedDistFrame, cv.COLOR_GRAY2BGR)
-        case -6:
+        case DisplayMode.H_SOBOL:
+            txt = "HSBL"
+            display_frame = cv.cvtColor(
+                cv.normalize(
+                    raw_horz_derivative, None, 0, 255, cv.NORM_MINMAX, cv.CV_8UC1
+                ),
+                cv.COLOR_GRAY2BGR,
+            )
+        case DisplayMode.V_SOBOL:
+            txt = "VSBL"
+            display_frame = cv.cvtColor(
+                cv.normalize(
+                    raw_vert_derivative, None, 0, 255, cv.NORM_MINMAX, cv.CV_8UC1
+                ),
+                cv.COLOR_GRAY2BGR,
+            )
+        case DisplayMode.COMBINED_DERIV:
             txt = "DERV"
-            display_frame = cv.cvtColor(normalised_horiz_derivative, cv.COLOR_GRAY2BGR)
-        case -7:
-            txt = "CPATH"
-            display_frame = cv.cvtColor(chosen_path_binary, cv.COLOR_GRAY2BGR)
-        case -8:
-            txt = "RPTM"
+            display_frame = cv.cvtColor(normalised_derivative, cv.COLOR_GRAY2BGR)
+
+        case DisplayMode.RAW_PATHS:
+            txt = "RAW PATHS"
             display_frame = cv.cvtColor(raw_paths_binary, cv.COLOR_GRAY2BGR)
-        case -9:
-            txt = "FPTM"
+        case DisplayMode.DENOISED_PATHS:
+            txt = "DNSD PATHS"
+            display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)  # TODO
+        case DisplayMode.CONTOURS:
+            txt = "CONTOURS"
             display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
-        case -10:
-            txt = "ALCTR"
-            display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
-            cv.drawContours(display_frame, contours, -1, (0, 255, 0), 1, cv.LINE_AA)
-            # for centroid in centroids:
-            #     cv.drawMarker(
-            #         display_frame, centroid, (255, 0, 0), cv.MARKER_CROSS, 11, 3
-            #     )
             for x, y, w, h in bounding_boxes:
                 cv.rectangle(
                     display_frame, (x, y), (x + w, y + h), (0, 0, 255), 2, cv.LINE_AA
                 )
-        case -11:
-            txt = "PTCTR"
+            cv.drawContours(display_frame, contours, -1, (0, 255, 0), 1, cv.LINE_AA)
+        case DisplayMode.FINAL_PATHS:
+            txt = "FNL PATHS"
             display_frame = cv.cvtColor(final_paths_binary, cv.COLOR_GRAY2BGR)
-
-            cv.drawContours(
-                display_frame,
-                contours,
-                chosen_path_idx,
-                (255, 255),
-                -1,
-                cv.LINE_AA,
-            )
             for i in potential_path_contours:
                 cv.drawContours(
                     display_frame,
@@ -480,28 +538,18 @@ while True:
                     2,
                     cv.LINE_AA,
                 )
-        case -12:
-            txt = "MASK"
-            display_frame = cv.cvtColor(path_mask, cv.COLOR_GRAY2BGR)
-        case 0:
-            txt = "RGB"
-            display_frame = input_frame
-        case 1:
-            txt = "Hue"
-            hsvHueOnly = hsvImg.copy()
-            hsvHueOnly[:, :, 1] = 255
-            hsvHueOnly[:, :, 2] = 255
-            hsvHueOnly = cv.cvtColor(hsvHueOnly, cv.COLOR_HSV2BGR_FULL)
-            display_frame = hsvHueOnly
-        case 2:
-            txt = "Sat"
-            display_frame = cv.cvtColor(hsvImg[:, :, 1], cv.COLOR_GRAY2BGR)
-        case 3:
-            txt = "Val"
-            display_frame = cv.cvtColor(hsvImg[:, :, 2], cv.COLOR_GRAY2BGR)
-        case 4:
-            txt = "HSV"
-            display_frame = hsvImg
+            cv.drawContours(
+                display_frame,
+                contours,
+                chosen_path_idx,
+                (255, 255, 0),
+                -1,
+                cv.LINE_AA,
+            )
+        case DisplayMode.CHOSEN_PATH:
+            txt = "CSN PATH"
+            display_frame = cv.cvtColor(chosen_path_binary, cv.COLOR_GRAY2BGR)
+
         case _:
             txt = "Dflt"
             display_frame = input_frame

@@ -4,13 +4,11 @@ import time
 import math
 import os
 
-remote_display = True
-# display_scale = 1 if remote_display else 0.5
-process_scale = 1
+remote_display = False
+process_scale = math.sqrt(1 / 2)
 # process_scale = 0.5
-# display_scale = 1 / process_scale
-display_scale = 0.5
-# process_scale = 1
+display_scale = 1 / process_scale
+display_scale = display_scale * (1 if remote_display else 0.5)
 
 os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
@@ -69,6 +67,9 @@ def update_pcx(val):
 
 
 def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
+    scale = scale * process_scale
+    (x, y) = org
+    org = (int(x * process_scale), int(y * process_scale))
     cv.putText(
         img,
         text,
@@ -76,7 +77,7 @@ def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
         cv.FONT_HERSHEY_SIMPLEX,
         scale,
         border,
-        4 * scale,
+        int(4 * scale),
         cv.LINE_AA,
     )
     cv.putText(
@@ -86,7 +87,7 @@ def rtext(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
         cv.FONT_HERSHEY_SIMPLEX,
         scale,
         col,
-        2 * scale,
+        int(2 * scale),
         cv.LINE_AA,
     )
 
@@ -155,8 +156,8 @@ if not cap.isOpened():
 # picIn = cv.imread("test4.png")  # TODO TESTING ONLY
 _, picIn = cap.read()
 rows, cols, channels = picIn.shape
-# rows = int(rows * process_scale)
-# cols = int(cols * process_scale)
+rows = int(rows * process_scale)
+cols = int(cols * process_scale)
 
 image_centre_x = int(cols / 2)
 image_centre_y = int(rows / 2)
@@ -233,7 +234,7 @@ cv.resizeWindow(window_title, int(cols * display_scale), int(rows * display_scal
 if not remote_display:
     cv.moveWindow(window_title, 0, -20)
 cv.setMouseCallback(window_title, mouse_event)
-cv.createTrackbar("Path Xo", window_title, 200, 400, update_pcx)
+# cv.createTrackbar("Path Xo", window_title, 200, 400, update_pcx)
 
 while True:
     key = cv.waitKey(1)

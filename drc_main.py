@@ -166,7 +166,7 @@ def serial_io_loop(
     averaging_count = math.ceil(target_ups * averaging_time)
     current_avg_buf = np.zeros(averaging_count)
     future_avg_buf = np.zeros(averaging_count)
-    
+
     # average weighting function
     weights = [2 ** (x**0.7) for x in range(0, averaging_count)]
 
@@ -718,6 +718,7 @@ if __name__ == "__main__":
         )
 
         # draw calculated pathfinding markers on final image
+        # show image centreline/path border
         cv.line(
             display_frame,
             (pathfinding_centre_x, 0),
@@ -732,6 +733,7 @@ if __name__ == "__main__":
             (255, 0, 255),
             4,
         )
+        # diamonds for immediate current + future targets
         cv.drawMarker(
             display_frame,
             (current_path_x, rows - 10),
@@ -748,6 +750,7 @@ if __name__ == "__main__":
             11,
             3,
         )
+        # line between current + future averaged targets
         cv.line(
             display_frame,
             (current_avg, rows),
@@ -755,6 +758,8 @@ if __name__ == "__main__":
             (0, 0, 255),
             3,
         )
+        # path outputs
+        # current/future lerp proportion
         cv.line(
             display_frame,
             (0, rows - lookahead_proportion),
@@ -762,6 +767,7 @@ if __name__ == "__main__":
             (255, 255, 0),
             2,
         )
+        # current target output
         cv.line(
             display_frame,
             (current_target, 0),

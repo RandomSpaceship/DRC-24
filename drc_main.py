@@ -775,6 +775,69 @@ if __name__ == "__main__":
             (255, 255, 0),
             2,
         )
+        # steering outputs
+        steering_view_height = 90
+        steering_view_x_offset = 5
+        steering_view_y_offset = 5
+        steering_view_width = 10
+        steering_view_spacing = 50
+        steering_view_y_center = steering_view_y_offset + int(steering_view_height / 2)
+        left, right = steering_to_motor_vals(current_pid_val.value, path_lost)
+        sv_right_px = int(steering_view_height / 2 * (right / 10000))
+        sv_left_px = int(steering_view_height / 2 * (left / 10000))
+
+        cv.rectangle(
+            display_frame,
+            (cols - steering_view_x_offset, steering_view_y_center),
+            (
+                cols - steering_view_x_offset - steering_view_width,
+                steering_view_y_center - sv_right_px,
+            ),
+            (0, 255, 0) if sv_right_px >= 0 else (0, 0, 255),
+            -1,
+        )
+        cv.rectangle(
+            display_frame,
+            (cols - steering_view_x_offset, steering_view_y_offset),
+            (
+                cols - steering_view_x_offset - steering_view_width,
+                steering_view_y_offset + steering_view_height,
+            ),
+            (0, 0, 0),
+            2,
+        )
+        cv.rectangle(
+            display_frame,
+            (
+                cols - steering_view_x_offset - steering_view_spacing,
+                steering_view_y_center,
+            ),
+            (
+                cols
+                - steering_view_x_offset
+                - steering_view_width
+                - steering_view_spacing,
+                steering_view_y_center - sv_left_px,
+            ),
+            (0, 255, 0) if sv_left_px >= 0 else (0, 0, 255),
+            -1,
+        )
+        cv.rectangle(
+            display_frame,
+            (
+                cols - steering_view_x_offset - steering_view_spacing,
+                steering_view_y_offset,
+            ),
+            (
+                cols
+                - steering_view_x_offset
+                - steering_view_width
+                - steering_view_spacing,
+                steering_view_y_offset + steering_view_height,
+            ),
+            (0, 0, 0),
+            2,
+        )
 
         # pixel is in BGR!
         mouse_x = min(max(mouse_x, 0), cols - 1)

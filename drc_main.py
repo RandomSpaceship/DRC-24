@@ -119,23 +119,74 @@ def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
     )
 
 
-def serial_io_loop(current_error, future_error, kill):
+def serial_io_loop(
+    current_error,
+    future_error,
+    current_avg,
+    future_avg,
+    current_target,
+    current_pid,
+    lookahead_proportion,
+    path_lost,
+    kill,
+):
+    target_fps = 30
+    averaging_time = 0.5
+    lookahead_start = 0.3
+
+    averaging_count = math.ceil(target_fps * averaging_time)
+    current_avg_buf = np.zeros(averaging_count)
+    future_avg_buf = np.zeros(averaging_count)
+    weights = [2 ** (x**0.7) for x in range(0, averaging_count)]
     while not kill.value:
         exec_start = time.time()
-        print(f"{current_error.value:+01.3f}, {future_error.value:+01.3f}")
+
+        current_avg_buf = np.roll(current_avg_buf, -1)
+        current_avg_buf[-1] = current_error.value
+        current_avg.value = np.average(current_avg_buf, weights=weights)
+
+        future_avg_buf = np.roll(future_avg_buf, -1)
+        future_avg_buf[-1] = future_error.value
+        future_avg.value = np.average(future_avg_buf, weights=weights)
+
+        # 2 ^ (-a*x^2) curve (bell curve)
+        lerp_val = 2 ** (-5 * ((abs(current_avg.value) / lookahead_start) ** 2))
+        lookahead_proportion.value = lerp_val
+
         exec_end = time.time()
         dt = exec_end - exec_start
-        time.sleep((1 / 10) - dt)
+        print(
+            f"{current_error.value:+01.3f}, {future_error.value:+01.3f}, {current_avg.value:+01.3f}, {future_avg.value:+01.3f}"
+        )
+        time.sleep((1.0 / target_fps) - dt)
 
 
 if __name__ == "__main__":
     print("\r\n\r\n")
     current_error_val = Value("d", 0)
     future_error_val = Value("d", 0)
+    current_avg_val = Value("d", 0)
+    future_avg_val = Value("d", 0)
+
+    current_target_val = Value("d", 0)
+    current_pid_val = Value("d", 0)
+    lookahead_proportion_val = Value("d", 0)
+    path_lost_val = Value("i", 0)
     serial_should_stop = Value("i", 0)
+
     serial_io_thread = Process(
         target=serial_io_loop,
-        args=(current_error_val, future_error_val, serial_should_stop),
+        args=(
+            current_error_val,
+            future_error_val,
+            current_avg_val,
+            future_avg_val,
+            current_target_val,
+            current_pid_val,
+            lookahead_proportion_val,
+            path_lost_val,
+            serial_should_stop,
+        ),
     )
     serial_io_thread.start()
     # DEBUGGING + DISPLAY
@@ -156,7 +207,7 @@ if __name__ == "__main__":
     red_hsv_thresh_range = (0, 0, 0)
 
     col_denoise_kernel_rad = 4
-    edge_fill_height = 0.1
+    edge_fill_height = 0.25
 
     # DENOISING/CLEANDING KERNELS
     color_denoise_kernel = cv.getStructuringElement(
@@ -362,7 +413,9 @@ if __name__ == "__main__":
         ) = cv.minMaxLoc(normalised_derivative, bottom_slice_mask)
 
         # threshold based on the minimum found gets us the "ridgelines" in the distance plot
-        raw_paths_binary = cv.inRange(normalised_derivative, 0, path_threshold_val)
+        _, raw_paths_binary = cv.threshold(
+            normalised_derivative, path_threshold_val, 255, cv.THRESH_BINARY_INV
+        )
         # opening (erode/dilate) removes the "strings" produced by the diagonal lines
         # denoised_paths_mask = cv.morphologyEx(
         #     raw_paths_mask, cv.MORPH_OPEN, path_open_kernel
@@ -610,17 +663,24 @@ if __name__ == "__main__":
         if not ylw_detected:
             current_path_error_px = current_path_error_px - no_col_detect_error_px
 
-        current_error_val.value = current_path_error_px / cols
-        future_error_val.value = future_path_error_px / cols
+        path_lost_val.value = path_lost
+        current_error_val.value = current_path_error_px / (cols / 2)
+        future_error_val.value = future_path_error_px / (cols / 2)
+
+        current_avg = image_centre_x + int(current_avg_val.value * (cols / 2))
+        future_avg = current_avg + int(future_avg_val.value * (cols / 2))
+        lookahead_proportion = int(
+            lookahead_proportion_val.value * future_path_offset_px
+        )
 
         # draw calculated pathfinding markers on final image
-        cv.line(
-            display_frame,
-            (pathfinding_centre_x, 0),
-            (pathfinding_centre_x, rows),
-            (255, 0, 255),
-            2,
-        )
+        # cv.line(
+        #     display_frame,
+        #     (pathfinding_centre_x, 0),
+        #     (pathfinding_centre_x, rows),
+        #     (255, 0, 255),
+        #     2,
+        # )
         cv.line(
             display_frame,
             (pathfinding_centre_x - horizontal_cutoff_dist_px, rows - 1),
@@ -643,6 +703,20 @@ if __name__ == "__main__":
             cv.MARKER_DIAMOND,
             11,
             3,
+        )
+        cv.line(
+            display_frame,
+            (current_avg, rows),
+            (future_avg, rows - future_path_offset_px),
+            (0, 0, 255),
+            3,
+        )
+        cv.line(
+            display_frame,
+            (0, rows - lookahead_proportion),
+            (cols, rows - lookahead_proportion),
+            (255, 255, 0),
+            2,
         )
 
         # pixel is in BGR!

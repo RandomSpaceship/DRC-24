@@ -6,6 +6,7 @@ import os
 import platform
 from enum import IntEnum
 from multiprocessing import Process, Value
+from simple_pid import PID
 
 is_on_pc = platform.system() == "Windows"
 remote_display = False or is_on_pc
@@ -134,6 +135,8 @@ def serial_io_loop(
     averaging_time = 0.5
     lookahead_start = 0.3
 
+    # pid = PID()
+
     averaging_count = math.ceil(target_fps * averaging_time)
     current_avg_buf = np.zeros(averaging_count)
     future_avg_buf = np.zeros(averaging_count)
@@ -152,6 +155,10 @@ def serial_io_loop(
         # 2 ^ (-a*x^2) curve (bell curve)
         lerp_val = 2 ** (-5 * ((abs(current_avg.value) / lookahead_start) ** 2))
         lookahead_proportion.value = lerp_val
+
+        current_target.value = ((1 - lerp_val) * current_avg.value) + (
+            lerp_val * future_avg.value
+        )
 
         exec_end = time.time()
         dt = exec_end - exec_start
@@ -172,6 +179,8 @@ if __name__ == "__main__":
     current_pid_val = Value("d", 0)
     lookahead_proportion_val = Value("d", 0)
     path_lost_val = Value("i", 0)
+    left_val = Value("i", 0)
+    right_val = Value("i", 0)
     serial_should_stop = Value("i", 0)
 
     serial_io_thread = Process(
@@ -239,10 +248,6 @@ if __name__ == "__main__":
 
     # robot config parameters
     path_failsafe_time = 0.3
-
-    Kp = 1
-    Ki = 0
-    Kd = 0
 
     setpoint = 0
 
@@ -667,11 +672,12 @@ if __name__ == "__main__":
         current_error_val.value = current_path_error_px / (cols / 2)
         future_error_val.value = future_path_error_px / (cols / 2)
 
-        current_avg = image_centre_x + int(current_avg_val.value * (cols / 2))
+        current_avg = pathfinding_centre_x + int(current_avg_val.value * (cols / 2))
         future_avg = current_avg + int(future_avg_val.value * (cols / 2))
         lookahead_proportion = int(
             lookahead_proportion_val.value * future_path_offset_px
         )
+        current_target = pathfinding_centre_x + int(current_target_val * (cols / 2))
 
         # draw calculated pathfinding markers on final image
         # cv.line(
@@ -715,6 +721,13 @@ if __name__ == "__main__":
             display_frame,
             (0, rows - lookahead_proportion),
             (cols, rows - lookahead_proportion),
+            (255, 255, 0),
+            2,
+        )
+        cv.line(
+            display_frame,
+            (current_target, 0),
+            (current_target, rows),
             (255, 255, 0),
             2,
         )

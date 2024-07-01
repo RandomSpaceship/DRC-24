@@ -120,6 +120,28 @@ def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
     )
 
 
+def steering_to_motor_vals(steering, kill):
+    # L/R range +/- 10000
+    min_forward = 3000
+    max_forward = 3000
+
+    max_steering = 5000
+
+    min_speed_steering = 0.3
+
+    slow_lerp = min(abs(steering) / min_speed_steering, 1)
+
+    forward_out = int(((1 - slow_lerp) * max_forward) + (slow_lerp * min_forward))
+    steering_out = int(steering * max_steering)
+
+    if kill:
+        return (0, 0)
+
+    left = forward_out - steering_out
+    right = forward_out + steering_out
+    return (left, right)
+
+
 def serial_io_loop(
     current_error,
     future_error,
@@ -131,41 +153,55 @@ def serial_io_loop(
     path_lost,
     kill,
 ):
-    target_fps = 30
+    target_ups = 60
     averaging_time = 0.5
     lookahead_start = 0.3
 
-    # pid = PID()
+    Kp = 1
+    Kd = 0
+    Ki = 0
+    pid = PID(Kp, Ki, Kd, setpoint=0, output_limits=(-1, 1))
 
-    averaging_count = math.ceil(target_fps * averaging_time)
+    # input averaging
+    averaging_count = math.ceil(target_ups * averaging_time)
     current_avg_buf = np.zeros(averaging_count)
     future_avg_buf = np.zeros(averaging_count)
+    
+    # average weighting function
     weights = [2 ** (x**0.7) for x in range(0, averaging_count)]
+
     while not kill.value:
-        exec_start = time.time()
+        exec_start = time.monotonic()
 
         current_avg_buf = np.roll(current_avg_buf, -1)
         current_avg_buf[-1] = current_error.value
-        current_avg.value = np.average(current_avg_buf, weights=weights)
+        current_avg_out = np.average(current_avg_buf, weights=weights)
+        current_avg.value = current_avg_out
 
         future_avg_buf = np.roll(future_avg_buf, -1)
         future_avg_buf[-1] = future_error.value
-        future_avg.value = np.average(future_avg_buf, weights=weights)
+        future_avg_out = np.average(future_avg_buf, weights=weights)
+        future_avg.value = future_avg_out
 
         # 2 ^ (-a*x^2) curve (bell curve)
-        lerp_val = 2 ** (-5 * ((abs(current_avg.value) / lookahead_start) ** 2))
+        lerp_val = 2 ** (-5 * ((abs(current_avg_out) / lookahead_start) ** 2))
         lookahead_proportion.value = lerp_val
 
-        current_target.value = ((1 - lerp_val) * current_avg.value) + (
-            lerp_val * future_avg.value
+        current_target_out = ((1 - lerp_val) * current_avg_out) + (
+            lerp_val * future_avg_out
         )
+        current_target.value = current_target_out
 
-        exec_end = time.time()
+        pid_out = pid(current_target_out)
+        current_pid.value = pid_out
+
+        exec_end = time.monotonic()
         dt = exec_end - exec_start
+        left, right = steering_to_motor_vals(pid_out, path_lost.value)
         print(
-            f"{current_error.value:+01.3f}, {future_error.value:+01.3f}, {current_avg.value:+01.3f}, {future_avg.value:+01.3f}"
+            f"L{left:+06d}, R{right:+06d}, C{current_avg_out:+01.3f}, F{future_avg_out:+01.3f}"
         )
-        time.sleep((1.0 / target_fps) - dt)
+        time.sleep((1.0 / target_ups) - dt)
 
 
 if __name__ == "__main__":
@@ -333,7 +369,7 @@ if __name__ == "__main__":
     cv.drawContours(path_mask, [path_mask_contour], 0, 255, -1)
 
     # FAILSAFE
-    last_time_path_seen = time.time()
+    last_time_path_seen = time.monotonic()
 
     # OPENCV WINDOW
     cv.namedWindow(window_title, cv.WINDOW_GUI_NORMAL)
@@ -348,13 +384,13 @@ if __name__ == "__main__":
         if key == ord("q"):
             break
 
-        start_time = time.time()
+        start_time = time.monotonic()
         # IMAGE INPUT
         # input_frame = picIn.copy()
         ret, input_frame = cap.read()
         if ret == False:
             break
-        capture_time = time.time()
+        capture_time = time.monotonic()
         # no need to blur if the camera's defocused!
         # input_frame = cv.blur(input_frame, (initial_blur_size, initial_blur_size))
         # input_frame = cv.GaussianBlur(
@@ -502,11 +538,11 @@ if __name__ == "__main__":
 
         # failsafe if no path detected
         if chosen_path_idx < 0:
-            if (time.time() - last_time_path_seen) > path_failsafe_time:
+            if (time.monotonic() - last_time_path_seen) > path_failsafe_time:
                 should_stop = True
             path_lost = True
         else:
-            last_time_path_seen = time.time()
+            last_time_path_seen = time.monotonic()
             cv.drawContours(
                 chosen_path_binary, contours, chosen_path_idx, 255, cv.FILLED
             )
@@ -537,7 +573,7 @@ if __name__ == "__main__":
                 )
                 short_path_warn = False
 
-        end_time = time.time()
+        end_time = time.monotonic()
 
         # RENDERING
         match current_display_mode:
@@ -677,16 +713,18 @@ if __name__ == "__main__":
         lookahead_proportion = int(
             lookahead_proportion_val.value * future_path_offset_px
         )
-        current_target = pathfinding_centre_x + int(current_target_val * (cols / 2))
+        current_target = pathfinding_centre_x + int(
+            current_target_val.value * (cols / 2)
+        )
 
         # draw calculated pathfinding markers on final image
-        # cv.line(
-        #     display_frame,
-        #     (pathfinding_centre_x, 0),
-        #     (pathfinding_centre_x, rows),
-        #     (255, 0, 255),
-        #     2,
-        # )
+        cv.line(
+            display_frame,
+            (pathfinding_centre_x, 0),
+            (pathfinding_centre_x, rows),
+            (255, 0, 255),
+            2,
+        )
         cv.line(
             display_frame,
             (pathfinding_centre_x - horizontal_cutoff_dist_px, rows - 1),
@@ -824,7 +862,7 @@ if __name__ == "__main__":
         full_dt = end_time - start_time
         proc_time_ms = proc_dt * 1000
         full_time_ms = proc_dt * 1000
-        fps = 1 / proc_dt
+        fps = 1 / max(proc_dt, 0.00001)
         render_text(
             display_frame,
             # f"P,F:{proc_time_ms:03.0f},{full_time_ms:03.0f} FPS:{fps:03.0f}",

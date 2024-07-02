@@ -121,18 +121,17 @@ def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
 
 
 def steering_to_motor_vals(steering, kill):
-    # L/R range +/- 10000
-    min_forward = 3000
-    max_forward = 3000
+    min_forward = 0.3
+    max_forward = 0.3
 
-    max_steering = 5000
+    max_steering = 0.5
 
     min_speed_steering = 0.3
 
     slow_lerp = min(abs(steering) / min_speed_steering, 1)
 
-    forward_out = int(((1 - slow_lerp) * max_forward) + (slow_lerp * min_forward))
-    steering_out = int(steering * max_steering)
+    forward_out = ((1 - slow_lerp) * max_forward) + (slow_lerp * min_forward)
+    steering_out = steering * max_steering
 
     if kill:
         return (0, 0)
@@ -161,6 +160,7 @@ def serial_io_loop(
     Kd = 0
     Ki = 0
     pid = PID(Kp, Ki, Kd, setpoint=0, output_limits=(-1, 1))
+    motor_range = 10000
 
     # input averaging
     averaging_count = math.ceil(target_ups * averaging_time)
@@ -197,7 +197,9 @@ def serial_io_loop(
 
         exec_end = time.monotonic()
         dt = exec_end - exec_start
-        left, right = steering_to_motor_vals(pid_out, path_lost.value)
+        left_f, right_f = steering_to_motor_vals(pid_out, path_lost.value)
+        left = int(left_f * motor_range)
+        right = int(right_f * motor_range)
         print(
             f"L{left:+06d}, R{right:+06d}, C{current_avg_out:+01.3f}, F{future_avg_out:+01.3f}"
         )
@@ -783,8 +785,8 @@ if __name__ == "__main__":
         steering_view_spacing = 50
         steering_view_y_center = steering_view_y_offset + int(steering_view_height / 2)
         left, right = steering_to_motor_vals(current_pid_val.value, path_lost)
-        sv_right_px = int(steering_view_height / 2 * (right / 10000))
-        sv_left_px = int(steering_view_height / 2 * (left / 10000))
+        sv_right_px = int((steering_view_height / 2) * right)
+        sv_left_px = int((steering_view_height / 2) * left)
 
         cv.rectangle(
             display_frame,

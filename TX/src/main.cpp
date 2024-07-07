@@ -51,9 +51,9 @@ void loop()
         buf[2] = ledState;
         memcpy(buf + 3, &xPos, 4);
         memcpy(buf + 7, &yPos, 4);
-        buf[12] = crc8(buf, 12);
+        buf[11] = crc8(buf, 11);
         // xbee.write(buf, 13);
-        xbee.write(buf, 13);
+        xbee.write(buf, 12);
     }
     digitalWrite(LED_BUILTIN, (millis() - last_rx) < 500);
 
@@ -88,10 +88,9 @@ void loop()
     xPos = xRaw;
     yPos = yRaw;
 
-    if (false)
-        while (Serial.available())
-        {
-            // Serial.write(Serial.peek());
-            xbee.write(Serial.read());
-        }
+    // while (Serial.available())
+    // {
+    //     // Serial.write(Serial.peek());
+    //     xbee.write(Serial.read());
+    // }
 }

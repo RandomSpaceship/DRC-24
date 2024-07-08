@@ -106,6 +106,8 @@ void loop()
     static bool remote_kill = true;
     static bool auto_kill = true;
     static uint32_t last_led = 0;
+    static uint32_t last_led_blink = 0;
+    static bool blink = false;
     static uint8_t hue_off = 0;
 
     /* digitalWrite(ENABLE, HIGH);
@@ -155,14 +157,60 @@ void loop()
     return; */
 
     // Turn the LED on, then pause
+    if (millis() - last_led_blink >= 500)
+    {
+        last_led_blink = millis();
+        blink = !blink;
+    }
     if (millis() - last_led >= 10)
     {
         hue_off += 1;
         last_led = millis();
         static uint8_t brightness = 150;
-        CHSV hsv1(-hue_off, 255, brightness);
-        CHSV hsv2(-hue_off + 255, 255, brightness);
-        fill_gradient(leds, NUM_LEDS, hsv1, hsv2, FORWARD_HUES);
+        if (remote_kill)
+        {
+            fill_solid(leds, NUM_LEDS, blink ? CRGB::Red : CRGB::Black);
+        }
+        else if (driveState == DRIVE_AUTO && auto_kill)
+        {
+            fill_solid(leds, NUM_LEDS, blink ? CRGB::Orange : CRGB::Black);
+        }
+        else
+        {
+            if (ledState == LED_DISCO)
+            {
+                CHSV hsv1(-hue_off, 255, brightness);
+                CHSV hsv2(-hue_off + 150, 255, brightness);
+                fill_gradient(leds, NUM_LEDS, hsv1, hsv2, FORWARD_HUES);
+            }
+            else if (ledState == LED_RED)
+            {
+                CHSV hsv1(0, 255, brightness);
+                fill_solid(leds, NUM_LEDS, hsv1);
+            }
+            else
+            {
+                if (driveState == DRIVE_AUTO)
+                {
+                    CHSV hsv1(0, 255, brightness);
+                    fill_solid(leds, NUM_LEDS, hsv1);
+                }
+                else if (driveState == DRIVE_MANUAL)
+                {
+                    CRGB rgb(0, brightness, 0);
+                    fill_solid(leds, NUM_LEDS, rgb);
+                }
+
+                else
+                {
+                    // CRGB rgb(0, brightness, 0);
+                    fill_solid(leds, NUM_LEDS, CRGB::Black);
+                    // CHSV hsv1(-hue_off, 255, brightness);
+                    // CHSV hsv2(-hue_off + 120, 255, brightness);
+                    // fill_gradient(leds, NUM_LEDS, hsv1, hsv2, FORWARD_HUES);
+                }
+            }
+        }
         FastLED.show();
     }
 

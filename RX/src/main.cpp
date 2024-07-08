@@ -40,22 +40,22 @@ void motorsWrite(int32_t left, int32_t right)
     if (fwdL)
     {
         analogWrite(CH_A1, left);
-        analogWrite(CH_A2, 0);
+        analogWrite(CH_B1, 0);
     }
     else
     {
         analogWrite(CH_A1, 0);
-        analogWrite(CH_A2, left);
+        analogWrite(CH_B1, left);
     }
     if (fwdR)
     {
-        analogWrite(CH_B1, left);
+        analogWrite(CH_A2, right);
         analogWrite(CH_B2, 0);
     }
     else
     {
-        analogWrite(CH_B1, 0);
-        analogWrite(CH_B2, left);
+        analogWrite(CH_A2, 0);
+        analogWrite(CH_B2, right);
     }
 }
 
@@ -79,20 +79,72 @@ void loop()
     static uint8_t driveState = DRIVE_STOP;
 
     static uint32_t last_update = 0;
-    static uint32_t last_rx = 0;
-    static uint32_t last_char = 0;
+    static uint32_t last_xbee_rx = 0;
+    static uint32_t last_xbee_char = 0;
+    static uint32_t last_auto_rx = 0;
+    static uint32_t last_auto_char = 0;
+    static uint32_t last_ka = 0;
 
     static int32_t manualLeft = 0;
     static int32_t manualRight = 0;
     static int32_t autoLeft = 0;
     static int32_t autoRight = 0;
 
-    static uint8_t buf[256];
+    static uint8_t xbeebuf[256];
+    static size_t xbeebufPos = 0;
+    static uint8_t autobuf[256];
+    static size_t autobufPos = 0;
     static char snpb[256];
-    static bool safe_kill = true;
-    static size_t bufPos = 0;
+    static bool remote_kill = true;
+    static bool auto_kill = true;
 
-    digitalWrite(LED_BUILTIN, (millis() - last_rx) < 300);
+    /* digitalWrite(ENABLE, HIGH);
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(i, 0);
+        delay(10);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(255 - i, 0);
+        delay(10);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(-i, 0);
+        delay(10);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(-255 + i, 0);
+        delay(10);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(0, i);
+        delay(10);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(0, 255 - i);
+        delay(10);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(0, -i);
+        delay(10);
+    }
+    for (int i = 0; i < 256; i++)
+    {
+        motorsWrite(0, -255 + i);
+        delay(10);
+    }
+    motorsWrite(0, 0);
+    digitalWrite(ENABLE, LOW);
+    delay(1000);
+    return; */
+
+    digitalWrite(LED_BUILTIN, (millis() - last_xbee_rx) < 300);
     if (millis() - last_update >= 10)
     {
         last_update = millis();
@@ -104,21 +156,25 @@ void loop()
         int32_t left, right;
         if (driveState == DRIVE_AUTO)
         {
+            digitalWrite(ENABLE, HIGH);
             left = autoLeft;
             right = autoRight;
         }
         else if (driveState == DRIVE_MANUAL)
         {
+            digitalWrite(ENABLE, HIGH);
             left = manualLeft;
             right = manualRight;
         }
         else
         {
+            digitalWrite(ENABLE, LOW);
             left = 0;
             right = 0;
         }
-        if (safe_kill)
+        if (remote_kill)
         {
+            digitalWrite(ENABLE, LOW);
             left = 0;
             right = 0;
         }
@@ -128,56 +184,110 @@ void loop()
     while (xbee.available())
     {
         uint8_t c = xbee.read();
-        last_char = millis();
-        if (bufPos == 0)
+        last_xbee_char = millis();
+        if (xbeebufPos == 0)
         {
             // Serial.println("Buf start");
             if (c == 0xAA)
             {
                 // Serial.println("RX hdr");
-                buf[bufPos++] = c;
+                xbeebuf[xbeebufPos++] = c;
             }
         }
-        else if (bufPos < 11)
+        else if (xbeebufPos < 11)
         {
             // Serial.print(c, HEX);
             // Serial.print(" ");
             // Serial.println(bufPos);
-            buf[bufPos++] = c;
+            xbeebuf[xbeebufPos++] = c;
         }
         else
         {
-            bufPos = 0;
-            uint8_t crc = crc8(buf, 11);
+            xbeebufPos = 0;
+            uint8_t crc = crc8(xbeebuf, 11);
             // snprintf(snpb, 256, "RX %02X, calc %02X", c, crc);
             // Serial.println(snpb);
             if (crc == c)
             {
-                last_rx = millis();
-                driveState = buf[1];
-                ledState = buf[2];
-                memcpy(&manualLeft, buf + 3, 4);
-                memcpy(&manualRight, buf + 7, 4);
-                Serial.println("RECV");
-                xbee.println("RECV");
-                safe_kill = false;
+                last_xbee_rx = millis();
+                driveState = xbeebuf[1];
+                ledState = xbeebuf[2];
+                memcpy(&manualLeft, xbeebuf + 3, 4);
+                memcpy(&manualRight, xbeebuf + 7, 4);
+                Serial.println("XB_RECV");
+                xbee.println("XB_RECV");
+                remote_kill = false;
                 break;
             }
         }
     }
-    if (millis() - last_char > 50 && bufPos)
+    while (Serial.available())
     {
-        bufPos = 0;
-        Serial.println("RX TIMEOUT");
+        uint8_t c = Serial.read();
+        last_auto_char = millis();
+        if (autobufPos == 0)
+        {
+            // Serial.println("Buf start");
+            if (c == 0xAA)
+            {
+                // Serial.println("RX hdr");
+                autobuf[autobufPos++] = c;
+            }
+        }
+        else if (autobufPos < 9)
+        {
+            // Serial.print(c, HEX);
+            // Serial.print(" ");
+            // Serial.println(bufPos);
+            autobuf[autobufPos++] = c;
+        }
+        else
+        {
+            autobufPos = 0;
+            uint8_t crc = crc8(autobuf, 9);
+            // snprintf(snpb, 256, "RX %02X, calc %02X", c, crc);
+            // Serial.println(snpb);
+            if (crc == c)
+            {
+                last_auto_rx = millis();
+                memcpy(&autoLeft, autobuf + 1, 4);
+                memcpy(&autoRight, autobuf + 5, 4);
+                Serial.println("SER_RECV");
+                xbee.println("SER_RECV");
+                // Serial.println("RECV");
+                auto_kill = false;
+                break;
+            }
+        }
     }
-    if (millis() - last_rx > 300 && driveState != DRIVE_STOP)
+    if (millis() - last_xbee_char > 50 && xbeebufPos)
+    {
+        xbeebufPos = 0;
+        Serial.println("RX TIMEOUT");
+        xbee.println("RX TIMEOUT");
+    }
+    if (millis() - last_auto_char > 50 && autobufPos)
+    {
+        autobufPos = 0;
+        Serial.println("AUTO RX TIMEOUT");
+        xbee.println("AUTO RX TIMEOUT");
+    }
+    if (millis() - last_xbee_rx > 300 && driveState != DRIVE_STOP)
     {
         Serial.println("SAFETY KILL");
         xbee.println("SAFETY KILL");
-        safe_kill = true;
+        remote_kill = true;
         driveState = DRIVE_STOP;
         manualLeft = 0;
         manualRight = 0;
+    }
+    if (millis() - last_auto_rx > 300 && (autoLeft || autoRight))
+    {
+        Serial.println("AUTO KILL");
+        xbee.println("AUTO KILL");
+        auto_kill = true;
+        autoLeft = 0;
+        autoRight = 0;
     }
 
     //     while (Serial.available())

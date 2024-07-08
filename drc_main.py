@@ -18,7 +18,7 @@ remote_display = True or is_on_pc
 process_scale = 1 if is_on_pc else 1 / 2
 display_scale = 1 / process_scale
 display_scale = display_scale * (1 if remote_display else 0.5)
-
+ser_send = True
 os.environ["DISPLAY"] = "192.168.81.74:0" if remote_display else ":0"
 
 window_title = "DRC Pathfinder"
@@ -56,6 +56,7 @@ def mouse_event(event, x, y, flags, param):
 
 def process_key(key):
     global current_display_mode
+    global robot_running
 
     if key == ord("g"):
         current_display_mode = DisplayMode.RGB
@@ -97,6 +98,10 @@ def process_key(key):
         current_display_mode = DisplayMode.CHOSEN_PATH
     if key == ord("b"):
         current_display_mode = DisplayMode.CONTOURS
+    if key == ord(" "):
+        robot_running = False
+    if key == ord("`"):
+        robot_running = True
 
 
 def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
@@ -177,7 +182,7 @@ def serial_io_loop(
     right_avg_buf = np.zeros(mot_averaging_count)
 
     # average weighting function
-    weights = [(((x+1)/averaging_count)**2) for x in range(0, averaging_count)]
+    weights = [(((x + 1) / averaging_count) ** 2) for x in range(0, averaging_count)]
 
     while not kill.value:
         exec_start = time.monotonic()
@@ -209,25 +214,25 @@ def serial_io_loop(
         dt = exec_end - exec_start
         left_f, right_f = steering_to_motor_vals(pid_out, path_lost.value)
         left = int(left_f * motor_range)
-        
+
         left = int(left_f * motor_range)
         left_avg_buf = np.roll(left_avg_buf, -1)
         left_avg_buf[-1] = left
         left_avg = int(np.average(left_avg_buf))
-        
+
         right = int(right_f * motor_range)
         right_avg_buf = np.roll(right_avg_buf, -1)
         right_avg_buf[-1] = right
         right_avg = int(np.average(right_avg_buf))
-        
-        
+
         print(
             f"P:{pid_out:+01.3f}, L{left:+06d}, R{right:+06d}, C{current_avg_out:+01.3f}, F{future_avg_out:+01.3f}"
         )
         raw_data = struct.pack("<Bll", 0xAA, left_avg, right_avg)
         crc = calculator.checksum(raw_data)
         final_data = struct.pack("<BllB", 0xAA, left_avg, right_avg, crc)
-        ser.write(final_data)
+        if ser_send:
+            ser.write(final_data)
 
         time.sleep(max((1.0 / target_ups) - dt, 0))
 
@@ -264,6 +269,7 @@ if __name__ == "__main__":
     serial_io_thread.start()
     # DEBUGGING + DISPLAY
     current_display_mode = DisplayMode.RGB
+    robot_running = False
 
     mouse_x = 0
     mouse_y = 0
@@ -734,9 +740,8 @@ if __name__ == "__main__":
         if not ylw_detected:
             current_path_error_px = current_path_error_px - no_col_detect_error_px
             future_path_error_px = future_path_error_px - no_col_detect_error_px
-        
 
-        path_lost_val.value = path_lost
+        path_lost_val.value = path_lost and robot_running
         current_error_val.value = current_path_error_px / (cols / 2)
         future_error_val.value = future_path_error_px / (cols / 2)
 
@@ -807,8 +812,8 @@ if __name__ == "__main__":
             (255, 255, 0),
             2,
         )
-        
-        current_pid_px = int(current_pid_val.value*cols + cols/2)
+
+        current_pid_px = int(current_pid_val.value * cols + cols / 2)
         cv.line(
             display_frame,
             (current_pid_px, 0),

@@ -7,17 +7,22 @@ import platform
 from enum import IntEnum
 from multiprocessing import Process, Value
 from simple_pid import PID
+from crc import Calculator, Crc8
+import serial
+import struct
 
+calculator = Calculator(Crc8.CCITT)
 is_on_pc = platform.system() == "Windows"
-remote_display = False or is_on_pc
+remote_display = True or is_on_pc
 
-process_scale = 1 if is_on_pc else math.sqrt(1 / 2)
+process_scale = 1 if is_on_pc else 1 / 2
 display_scale = 1 / process_scale
 display_scale = display_scale * (1 if remote_display else 0.5)
 
 os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
 
 window_title = "DRC Pathfinder"
+ser = serial.Serial("/dev/ttyUSB0", 115200, timeout=0.1)
 
 
 class DisplayMode(IntEnum):
@@ -152,15 +157,15 @@ def serial_io_loop(
     path_lost,
     kill,
 ):
-    target_ups = 60
-    averaging_time = 0.5
+    target_ups = 100
+    averaging_time = 1
     lookahead_start = 0.3
 
-    Kp = 1
-    Kd = 0
+    Kp = 0.7
+    Kd = 0.01
     Ki = 0
     pid = PID(Kp, Ki, Kd, setpoint=0, output_limits=(-1, 1))
-    motor_range = 10000
+    motor_range = 200
 
     # input averaging
     averaging_count = math.ceil(target_ups * averaging_time)
@@ -168,7 +173,7 @@ def serial_io_loop(
     future_avg_buf = np.zeros(averaging_count)
 
     # average weighting function
-    weights = [2 ** (x**0.7) for x in range(0, averaging_count)]
+    weights = [2 ** ((x/averaging_count)**2) for x in range(0, averaging_count)]
 
     while not kill.value:
         exec_start = time.monotonic()
@@ -203,7 +208,12 @@ def serial_io_loop(
         print(
             f"L{left:+06d}, R{right:+06d}, C{current_avg_out:+01.3f}, F{future_avg_out:+01.3f}"
         )
-        time.sleep((1.0 / target_ups) - dt)
+        raw_data = struct.pack("<Bll", 0xAA, left, right)
+        crc = calculator.checksum(raw_data)
+        final_data = struct.pack("<BllB", 0xAA, left, right, crc)
+        ser.write(final_data)
+
+        time.sleep(max((1.0 / target_ups) - dt, 0))
 
 
 if __name__ == "__main__":
@@ -243,17 +253,17 @@ if __name__ == "__main__":
     mouse_y = 0
 
     # THRESHOLDING
-    blu_hsv = (150, 220, 170)
-    ylw_hsv = (35, 110, 180)
+    blu_hsv = (150, 130, 110)
+    ylw_hsv = (40, 140, 160)
     mgnta_hsv = (0, 0, 0)
     red_hsv = (0, 0, 0)
 
-    blu_hsv_thresh_range = (20, 50, 100)
-    ylw_hsv_thresh_range = (20, 50, 70)
+    blu_hsv_thresh_range = (20, 60, 60)
+    ylw_hsv_thresh_range = (20, 30, 50)
     mgnta_hsv_thresh_range = (0, 0, 0)
     red_hsv_thresh_range = (0, 0, 0)
 
-    col_denoise_kernel_rad = 4
+    col_denoise_kernel_rad = 2
     edge_fill_height = 0.25
 
     # DENOISING/CLEANDING KERNELS
@@ -281,8 +291,8 @@ if __name__ == "__main__":
     horizontal_cutoff_dist = 0.5
     future_path_height = 0.35
     path_min_area_proportion = 0.01 * 0.1
-    color_min_area_proportion = 0.1 * 0.1
-    no_col_detect_error = 0.3
+    color_min_area_proportion = 0.01 * 0.1
+    no_col_detect_error = 0.5
 
     # robot config parameters
     path_failsafe_time = 0.3
@@ -400,20 +410,21 @@ if __name__ == "__main__":
         # )
         # scale image down to reduce processing time at the cost of error resolution
         input_frame = cv.resize(input_frame, (cols, rows))
+        input_frame = cv.flip(input_frame, -1)
 
         hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
 
         # calculate thresholded masks for various colors
         blu_mask = cv.inRange(hsvImg, blu_hsv_low, blu_hsv_high)
         blu_detected = cv.countNonZero(blu_mask) > color_min_area
-        blu_mask[rows - edge_fill_height_px : rows, 0 : col_denoise_kernel_rad + 1] = (
-            255
-        )
-        ylw_mask = cv.inRange(hsvImg, ylw_hsv_low, ylw_hsv_high)
-        ylw_detected = cv.countNonZero(ylw_mask) > color_min_area
-        ylw_mask[
+        blu_mask[
             rows - edge_fill_height_px : rows, cols - col_denoise_kernel_rad - 1 : cols
         ] = 255
+        ylw_mask = cv.inRange(hsvImg, ylw_hsv_low, ylw_hsv_high)
+        ylw_detected = cv.countNonZero(ylw_mask) > color_min_area
+        ylw_mask[rows - edge_fill_height_px : rows, 0 : col_denoise_kernel_rad + 1] = (
+            255
+        )
         mgnta_mask = cv.inRange(hsvImg, mgnta_hsv_low, mgnta_hsv_high)
         # combine the masks
         track_boundaries_mask = cv.bitwise_xor(ylw_mask, blu_mask)
@@ -951,3 +962,4 @@ if __name__ == "__main__":
     cv.destroyAllWindows()
     cap.release()
     serial_io_thread.join()
+    ser.close()

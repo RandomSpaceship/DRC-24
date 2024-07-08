@@ -19,7 +19,7 @@ process_scale = 1 if is_on_pc else 1 / 2
 display_scale = 1 / process_scale
 display_scale = display_scale * (1 if remote_display else 0.5)
 
-os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
+os.environ["DISPLAY"] = "192.168.81.74:0" if remote_display else ":0"
 
 window_title = "DRC Pathfinder"
 ser = serial.Serial("/dev/ttyUSB0", 115200, timeout=0.1)
@@ -158,22 +158,26 @@ def serial_io_loop(
     kill,
 ):
     target_ups = 100
-    averaging_time = 1
+    averaging_time = 0.3
+    mot_averaging_time = 0.7
     lookahead_start = 0.3
 
-    Kp = 0.7
-    Kd = 0.01
+    Kp = 1.5
+    Kd = 0.05
     Ki = 0
     pid = PID(Kp, Ki, Kd, setpoint=0, output_limits=(-1, 1))
     motor_range = 200
 
     # input averaging
     averaging_count = math.ceil(target_ups * averaging_time)
+    mot_averaging_count = math.ceil(target_ups * mot_averaging_time)
     current_avg_buf = np.zeros(averaging_count)
     future_avg_buf = np.zeros(averaging_count)
+    left_avg_buf = np.zeros(mot_averaging_count)
+    right_avg_buf = np.zeros(mot_averaging_count)
 
     # average weighting function
-    weights = [2 ** ((x/averaging_count)**2) for x in range(0, averaging_count)]
+    weights = [(((x+1)/averaging_count)**2) for x in range(0, averaging_count)]
 
     while not kill.value:
         exec_start = time.monotonic()
@@ -204,13 +208,24 @@ def serial_io_loop(
         dt = exec_end - exec_start
         left_f, right_f = steering_to_motor_vals(pid_out, path_lost.value)
         left = int(left_f * motor_range)
+        
+        left = int(left_f * motor_range)
+        left_avg_buf = np.roll(left_avg_buf, -1)
+        left_avg_buf[-1] = left
+        left_avg = int(np.average(left_avg_buf))
+        
         right = int(right_f * motor_range)
+        right_avg_buf = np.roll(right_avg_buf, -1)
+        right_avg_buf[-1] = right
+        right_avg = int(np.average(right_avg_buf))
+        
+        
         print(
             f"L{left:+06d}, R{right:+06d}, C{current_avg_out:+01.3f}, F{future_avg_out:+01.3f}"
         )
-        raw_data = struct.pack("<Bll", 0xAA, left, right)
+        raw_data = struct.pack("<Bll", 0xAA, left_avg, right_avg)
         crc = calculator.checksum(raw_data)
-        final_data = struct.pack("<BllB", 0xAA, left, right, crc)
+        final_data = struct.pack("<BllB", 0xAA, left_avg, right_avg, crc)
         ser.write(final_data)
 
         time.sleep(max((1.0 / target_ups) - dt, 0))
@@ -253,13 +268,13 @@ if __name__ == "__main__":
     mouse_y = 0
 
     # THRESHOLDING
-    blu_hsv = (150, 130, 110)
-    ylw_hsv = (40, 140, 160)
+    blu_hsv = (150, 150, 200)
+    ylw_hsv = (40, 70, 200)
     mgnta_hsv = (0, 0, 0)
     red_hsv = (0, 0, 0)
 
     blu_hsv_thresh_range = (20, 60, 60)
-    ylw_hsv_thresh_range = (20, 30, 50)
+    ylw_hsv_thresh_range = (20, 20, 60)
     mgnta_hsv_thresh_range = (0, 0, 0)
     red_hsv_thresh_range = (0, 0, 0)
 
@@ -289,10 +304,10 @@ if __name__ == "__main__":
 
     # filtering/slicing image proportions
     horizontal_cutoff_dist = 0.5
-    future_path_height = 0.35
+    future_path_height = 0.25
     path_min_area_proportion = 0.01 * 0.1
-    color_min_area_proportion = 0.01 * 0.1
-    no_col_detect_error = 0.5
+    color_min_area_proportion = 0.01 * 0.08
+    no_col_detect_error = 0.05
 
     # robot config parameters
     path_failsafe_time = 0.3
@@ -447,7 +462,7 @@ if __name__ == "__main__":
         )
         # laplacian is just horiz + vertical 2nd order sobel added together
         # allows it to handle sharp corners or U-turns better
-        raw_derivative = (raw_horz_derivative * 1.1) + (raw_vert_derivative * 1)
+        raw_derivative = (raw_horz_derivative * 1.1) + (raw_vert_derivative * 0.5)
         # raw_derivative = cv.Laplacian(
         #     distance_plot, cv.CV_32F, ksize=derivative_kernel_size
         # )

@@ -3,6 +3,10 @@
 #include <FastLED.h>
 #include <SoftwareSerial.h>
 
+#define NUM_LEDS 28
+
+#define DATA_PIN 3
+
 SoftwareSerial xbee(12, 11);
 
 // uint8_t rxbuff[256];
@@ -25,6 +29,8 @@ typedef enum
 #define ENABLE 7
 #define CH_A2  6
 #define CH_A1  5
+
+CRGB leds[NUM_LEDS];
 
 void motorsWrite(int32_t left, int32_t right)
 {
@@ -65,6 +71,8 @@ void setup()
     xbee.begin(38400);
     Serial.begin(115200);
 
+    FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);  // GRB ordering is assumed
+
     pinMode(ENABLE, OUTPUT);
     pinMode(CH_A1, OUTPUT);
     pinMode(CH_A2, OUTPUT);
@@ -97,6 +105,8 @@ void loop()
     static char snpb[256];
     static bool remote_kill = true;
     static bool auto_kill = true;
+    static uint32_t last_led = 0;
+    static uint8_t hue_off = 0;
 
     /* digitalWrite(ENABLE, HIGH);
     for (int i = 0; i < 256; i++)
@@ -143,6 +153,18 @@ void loop()
     digitalWrite(ENABLE, LOW);
     delay(1000);
     return; */
+
+    // Turn the LED on, then pause
+    if (millis() - last_led >= 10)
+    {
+        hue_off += 1;
+        last_led = millis();
+        static uint8_t brightness = 150;
+        CHSV hsv1(-hue_off, 255, brightness);
+        CHSV hsv2(-hue_off + 255, 255, brightness);
+        fill_gradient(leds, NUM_LEDS, hsv1, hsv2, FORWARD_HUES);
+        FastLED.show();
+    }
 
     digitalWrite(LED_BUILTIN, (millis() - last_xbee_rx) < 300);
     if (millis() - last_update >= 10)

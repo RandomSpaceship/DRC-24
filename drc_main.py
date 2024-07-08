@@ -16,9 +16,10 @@ is_on_pc = platform.system() == "Windows"
 remote_display = True or is_on_pc
 
 process_scale = 1 if is_on_pc else 1 / 2
-display_scale = 1 / process_scale
+display_scale = 1  / process_scale
 display_scale = display_scale * (1 if remote_display else 0.5)
 ser_send = True
+# ser_send = False
 os.environ["DISPLAY"] = "192.168.81.74:0" if remote_display else ":0"
 
 window_title = "DRC Pathfinder"
@@ -56,7 +57,8 @@ def mouse_event(event, x, y, flags, param):
 
 def process_key(key):
     global current_display_mode
-    global robot_running
+    global robot_stop
+    global program_start
 
     if key == ord("g"):
         current_display_mode = DisplayMode.RGB
@@ -99,9 +101,10 @@ def process_key(key):
     if key == ord("b"):
         current_display_mode = DisplayMode.CONTOURS
     if key == ord(" "):
-        robot_running = False
+        robot_stop = True
     if key == ord("`"):
-        robot_running = True
+        program_start = time.monotonic()
+        robot_stop = False
 
 
 def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
@@ -131,10 +134,11 @@ def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
 
 
 def steering_to_motor_vals(steering, kill):
+    steering = min(max(steering, -1), 1)
     min_forward = 0.25
     max_forward = min_forward
 
-    max_steering = 1
+    max_steering = 0.4
 
     min_speed_steering = 0.3
 
@@ -164,11 +168,11 @@ def serial_io_loop(
 ):
     target_ups = 100
     averaging_time = 0.3
-    mot_averaging_time = 0.7
+    mot_averaging_time = 0.3
     lookahead_start = 0.3
 
-    Kp = 0.5
-    Kd = 0.0
+    Kp = 3.0
+    Kd = 1.0
     Ki = 0
     pid = PID(Kp, Ki, Kd, setpoint=0, output_limits=(-1, 1))
     motor_range = 255
@@ -239,37 +243,13 @@ def serial_io_loop(
 
 if __name__ == "__main__":
     print("\r\n\r\n")
-    current_error_val = Value("d", 0)
-    future_error_val = Value("d", 0)
-    current_avg_val = Value("d", 0)
-    future_avg_val = Value("d", 0)
+    color_min_area_proportion = 0.01 * 0.1
+    no_col_detect_error = 0.05
+    future_path_height = 0.3
 
-    current_target_val = Value("d", 0)
-    current_pid_val = Value("d", 0)
-    lookahead_proportion_val = Value("d", 0)
-    path_lost_val = Value("i", 0)
-    left_val = Value("i", 0)
-    right_val = Value("i", 0)
-    serial_should_stop = Value("i", 0)
-
-    serial_io_thread = Process(
-        target=serial_io_loop,
-        args=(
-            current_error_val,
-            future_error_val,
-            current_avg_val,
-            future_avg_val,
-            current_target_val,
-            current_pid_val,
-            lookahead_proportion_val,
-            path_lost_val,
-            serial_should_stop,
-        ),
-    )
-    serial_io_thread.start()
     # DEBUGGING + DISPLAY
     current_display_mode = DisplayMode.RGB
-    robot_running = False
+    robot_stop = remote_display
 
     mouse_x = 0
     mouse_y = 0
@@ -277,12 +257,12 @@ if __name__ == "__main__":
     # THRESHOLDING
     blu_hsv = (150, 150, 200)
     ylw_hsv = (40, 70, 200)
-    mgnta_hsv = (0, 0, 0)
+    mgnta_hsv = (220, 150, 40)
     red_hsv = (0, 0, 0)
 
     blu_hsv_thresh_range = (20, 60, 60)
     ylw_hsv_thresh_range = (20, 20, 60)
-    mgnta_hsv_thresh_range = (0, 0, 0)
+    mgnta_hsv_thresh_range = (30, 30, 30)
     red_hsv_thresh_range = (0, 0, 0)
 
     col_denoise_kernel_rad = 2
@@ -306,15 +286,10 @@ if __name__ == "__main__":
     initial_blur_size = 31
 
     # more image proportions
-    # if absolute error is les
-    path_error_switch_start = 0.5
 
     # filtering/slicing image proportions
     horizontal_cutoff_dist = 0.5
-    future_path_height = 0.25
     path_min_area_proportion = 0.01 * 0.1
-    color_min_area_proportion = 0.03 * 0.1
-    no_col_detect_error = 0.2
 
     # robot config parameters
     path_failsafe_time = 0.3
@@ -325,6 +300,37 @@ if __name__ == "__main__":
     if not cap.isOpened():
         print("Cannot open camera")
         exit()
+
+    current_error_val = Value("d", 0)
+    future_error_val = Value("d", 0)
+    current_avg_val = Value("d", 0)
+    future_avg_val = Value("d", 0)
+
+    current_target_val = Value("d", 0)
+    current_pid_val = Value("d", 0)
+    lookahead_proportion_val = Value("d", 0)
+    path_lost_val = Value("i", 0)
+    left_val = Value("i", 0)
+    right_val = Value("i", 0)
+    serial_should_stop = Value("i", 0)
+    program_start = time.monotonic()
+    path_lost_val.value = True
+
+    serial_io_thread = Process(
+        target=serial_io_loop,
+        args=(
+            current_error_val,
+            future_error_val,
+            current_avg_val,
+            future_avg_val,
+            current_target_val,
+            current_pid_val,
+            lookahead_proportion_val,
+            path_lost_val,
+            serial_should_stop,
+        ),
+    )
+    serial_io_thread.start()
 
     # picIn = cv.imread("test4.png")  # TODO TESTING ONLY
     _, picIn = cap.read()
@@ -415,7 +421,9 @@ if __name__ == "__main__":
     while True:
         key = cv.waitKey(1)
         process_key(key)
-        if key == ord("q"):
+        if key == ord("-"):
+            break
+        if time.monotonic() - program_start > 10 and not remote_display:
             break
 
         start_time = time.monotonic()
@@ -741,7 +749,7 @@ if __name__ == "__main__":
             current_path_error_px = current_path_error_px - no_col_detect_error_px
             future_path_error_px = future_path_error_px - no_col_detect_error_px
 
-        path_lost_val.value = path_lost and robot_running
+        path_lost_val.value = path_lost or robot_stop
         current_error_val.value = current_path_error_px / (cols / 2)
         future_error_val.value = future_path_error_px / (cols / 2)
 
@@ -989,7 +997,7 @@ if __name__ == "__main__":
         # display_frame = cv.resize(
         #     display_frame, (int(cols * display_scale), int(rows * display_scale))
         # )
-        cv.imshow(window_title, display_frame)
+        # cv.imshow(window_title, display_frame)
 
     serial_should_stop.value = 1
     cv.destroyAllWindows()

@@ -54,8 +54,8 @@ void loop()
     if (abs(y) < 45)
         y = 0;
 
-    const static int xRange = 100;
-    const static int yRange = 150;
+    const static int xRange = 150;
+    const static int yRange = 255;
     int turn = map(x, -512, 511, -xRange, xRange);
     int fwd = map(y, -512, 511, -yRange, yRange);
     left = fwd + turn;

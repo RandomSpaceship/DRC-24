@@ -331,7 +331,7 @@ void loop()
     //     manualLeft = 0;
     //     manualRight = 0;
     // }
-    if (millis() - last_auto_rx > 300 && (autoLeft || autoRight))
+    if (millis() - last_auto_rx > 300 && (!auto_kill))
     {
         Serial.println("AUTO KILL");
         xbee.println("AUTO KILL");

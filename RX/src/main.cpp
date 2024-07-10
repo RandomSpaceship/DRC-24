@@ -212,9 +212,29 @@ void loop()
         uint8_t c = xbee.read();
         last_xbee_char = millis();
         if (c == '1')
+        {
+            Serial.println("AUTO");
+            xbee.println("AUTO");
             driveState = DRIVE_AUTO;
+        }
+        else if (c == 'q')
+        {
+            Serial.println("AUTOLED");
+            xbee.println("AUTOLED");
+            ledState = LED_AUTO;
+        }
+        else if (c == 'w')
+        {
+            Serial.println("DISCO");
+            xbee.println("DISCO");
+            ledState = LED_DISCO;
+        }
         else
+        {
+            Serial.println("STOP");
+            xbee.println("STOP");
             driveState = DRIVE_STOP;
+        }
         /* if (xbeebufPos == 0)
         {
             // Serial.println("Buf start");

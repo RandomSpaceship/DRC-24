@@ -135,10 +135,10 @@ def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
 
 def steering_to_motor_vals(steering, kill):
     steering = min(max(steering, -1), 1)
-    min_forward = 0.35
+    min_forward = 0.6
     max_forward = min_forward
 
-    max_steering = 0.4
+    max_steering = 0.6
 
     min_speed_steering = 0.3
 
@@ -171,8 +171,8 @@ def serial_io_loop(
     mot_averaging_time = 0.1
     lookahead_start = 0.3
 
-    Kp = 4.5
-    Kd = 1.2
+    Kp = 3.0
+    Kd = 0.5
     Ki = 0
     pid = PID(Kp, Ki, Kd, setpoint=0, output_limits=(-1, 1))
     motor_range = 255
@@ -245,7 +245,8 @@ if __name__ == "__main__":
     print("\r\n\r\n")
     color_min_area_proportion = 0.01 * 0.1
     no_col_detect_error = 0.05
-    future_path_height = 0.27
+    future_path_height = 0.35
+    show = True
 
     # DEBUGGING + DISPLAY
     current_display_mode = DisplayMode.RGB
@@ -256,13 +257,13 @@ if __name__ == "__main__":
 
     # THRESHOLDING
     blu_hsv = (150, 150, 200)
-    ylw_hsv = (40, 70, 200)
-    mgnta_hsv = (220, 150, 40)
+    ylw_hsv = (40, 80, 200)
+    mgnta_hsv = (230, 130, 70)
     red_hsv = (0, 0, 0)
 
     blu_hsv_thresh_range = (20, 60, 60)
-    ylw_hsv_thresh_range = (20, 20, 60)
-    mgnta_hsv_thresh_range = (230, 130, 70)
+    ylw_hsv_thresh_range = (20, 30, 60)
+    mgnta_hsv_thresh_range = (40, 60, 50)
     red_hsv_thresh_range = (0, 0, 0)
 
     col_denoise_kernel_rad = 2
@@ -997,7 +998,8 @@ if __name__ == "__main__":
         # display_frame = cv.resize(
         #     display_frame, (int(cols * display_scale), int(rows * display_scale))
         # )
-        # cv.imshow(window_title, display_frame)
+        if show:
+            cv.imshow(window_title, display_frame)
 
     serial_should_stop.value = 1
     cv.destroyAllWindows()

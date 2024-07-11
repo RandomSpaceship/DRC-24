@@ -185,7 +185,7 @@ void loop()
             }
             else if (ledState == LED_RED)
             {
-                CHSV hsv1(0, 255, brightness);
+                CRGB hsv1(10, 0, 0);
                 fill_solid(leds, NUM_LEDS, hsv1);
             }
             else
@@ -284,7 +284,10 @@ void loop()
                 ledState = xbeebuf[2];
                 memcpy(&manualLeft, xbeebuf + 3, 4);
                 memcpy(&manualRight, xbeebuf + 7, 4);
-                Serial.println("XB_RECV");
+                Serial.print(manualLeft);
+                Serial.print(" ");
+                Serial.print(manualRight);
+                Serial.println(" XB_RECV");
                 xbee.println("XB_RECV");
                 remote_kill = false;
                 break;

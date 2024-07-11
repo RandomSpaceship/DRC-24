@@ -84,7 +84,7 @@ void setup()
 void loop()
 {
     static uint8_t ledState = LED_AUTO;
-    static uint8_t driveState = DRIVE_STOP;
+    static uint8_t driveState = DRIVE_AUTO;
 
     static uint32_t last_update = 0;
     static uint32_t last_xbee_rx = 0;
@@ -103,58 +103,12 @@ void loop()
     static uint8_t autobuf[256];
     static size_t autobufPos = 0;
     static char snpb[256];
-    static bool remote_kill = true;
+    static bool remote_kill = false;
     static bool auto_kill = true;
     static uint32_t last_led = 0;
     static uint32_t last_led_blink = 0;
     static bool blink = false;
     static uint8_t hue_off = 0;
-
-    /* digitalWrite(ENABLE, HIGH);
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(i, 0);
-        delay(10);
-    }
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(255 - i, 0);
-        delay(10);
-    }
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(-i, 0);
-        delay(10);
-    }
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(-255 + i, 0);
-        delay(10);
-    }
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(0, i);
-        delay(10);
-    }
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(0, 255 - i);
-        delay(10);
-    }
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(0, -i);
-        delay(10);
-    }
-    for (int i = 0; i < 256; i++)
-    {
-        motorsWrite(0, -255 + i);
-        delay(10);
-    }
-    motorsWrite(0, 0);
-    digitalWrite(ENABLE, LOW);
-    delay(1000);
-    return; */
 
     // Turn the LED on, then pause
     if (millis() - last_led_blink >= 500)
@@ -166,14 +120,16 @@ void loop()
     {
         hue_off += 1;
         last_led = millis();
-        static uint8_t brightness = 150;
+        static uint8_t brightness = 40;
         if (remote_kill)
         {
-            fill_solid(leds, NUM_LEDS, blink ? CRGB::Red : CRGB::Black);
+            CRGB red(brightness, 0, 0);
+            fill_solid(leds, NUM_LEDS, blink ? red : CRGB::Black);
         }
         else if (driveState == DRIVE_AUTO && auto_kill)
         {
-            fill_solid(leds, NUM_LEDS, blink ? CRGB::Orange : CRGB::Black);
+            CRGB orange(brightness, brightness / 2, 0);
+            fill_solid(leds, NUM_LEDS, blink ? orange : CRGB::Black);
         }
         else
         {
@@ -255,7 +211,31 @@ void loop()
     {
         uint8_t c = xbee.read();
         last_xbee_char = millis();
-        if (xbeebufPos == 0)
+        if (c == '1')
+        {
+            Serial.println("AUTO");
+            xbee.println("AUTO");
+            driveState = DRIVE_AUTO;
+        }
+        else if (c == 'q')
+        {
+            Serial.println("AUTOLED");
+            xbee.println("AUTOLED");
+            ledState = LED_AUTO;
+        }
+        else if (c == 'w')
+        {
+            Serial.println("DISCO");
+            xbee.println("DISCO");
+            ledState = LED_DISCO;
+        }
+        else
+        {
+            Serial.println("STOP");
+            xbee.println("STOP");
+            driveState = DRIVE_STOP;
+        }
+        /* if (xbeebufPos == 0)
         {
             // Serial.println("Buf start");
             if (c == 0xAA)
@@ -292,7 +272,7 @@ void loop()
                 remote_kill = false;
                 break;
             }
-        }
+        } */
     }
     while (Serial.available())
     {
@@ -345,16 +325,16 @@ void loop()
         Serial.println("AUTO RX TIMEOUT");
         xbee.println("AUTO RX TIMEOUT");
     }
-    if (millis() - last_xbee_rx > 300 && driveState != DRIVE_STOP)
-    {
-        Serial.println("SAFETY KILL");
-        xbee.println("SAFETY KILL");
-        remote_kill = true;
-        driveState = DRIVE_STOP;
-        manualLeft = 0;
-        manualRight = 0;
-    }
-    if (millis() - last_auto_rx > 300 && (autoLeft || autoRight))
+    // if (millis() - last_xbee_rx > 300 && driveState != DRIVE_STOP)
+    // {
+    //     Serial.println("SAFETY KILL");
+    //     xbee.println("SAFETY KILL");
+    //     remote_kill = true;
+    //     driveState = DRIVE_STOP;
+    //     manualLeft = 0;
+    //     manualRight = 0;
+    // }
+    if (millis() - last_auto_rx > 300 && (!auto_kill))
     {
         Serial.println("AUTO KILL");
         xbee.println("AUTO KILL");

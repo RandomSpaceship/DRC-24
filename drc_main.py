@@ -7,17 +7,23 @@ import platform
 from enum import IntEnum
 from multiprocessing import Process, Value
 from simple_pid import PID
+from crc import Calculator, Crc8
+import serial
+import struct
 
+calculator = Calculator(Crc8.CCITT)
 is_on_pc = platform.system() == "Windows"
-remote_display = False or is_on_pc
+remote_display = True or is_on_pc
 
-process_scale = 1 if is_on_pc else math.sqrt(1 / 2)
+process_scale = 1 if is_on_pc else 1 / 2
 display_scale = 1 / process_scale
 display_scale = display_scale * (1 if remote_display else 0.5)
-
-os.environ["DISPLAY"] = "mcrn-tachi.local:0" if remote_display else ":0"
+ser_send = True
+# ser_send = False
+os.environ["DISPLAY"] = "192.168.81.74:0" if remote_display else ":0"
 
 window_title = "DRC Pathfinder"
+ser = serial.Serial("/dev/ttyUSB0", 115200, timeout=0.1)
 
 
 class DisplayMode(IntEnum):
@@ -51,6 +57,8 @@ def mouse_event(event, x, y, flags, param):
 
 def process_key(key):
     global current_display_mode
+    global robot_stop
+    global program_start
 
     if key == ord("g"):
         current_display_mode = DisplayMode.RGB
@@ -92,6 +100,11 @@ def process_key(key):
         current_display_mode = DisplayMode.CHOSEN_PATH
     if key == ord("b"):
         current_display_mode = DisplayMode.CONTOURS
+    if key == ord(" "):
+        robot_stop = True
+    if key == ord("`"):
+        program_start = time.monotonic()
+        robot_stop = False
 
 
 def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
@@ -121,10 +134,11 @@ def render_text(img, text, org, col=(0, 0, 0), border=(255, 255, 255), scale=1):
 
 
 def steering_to_motor_vals(steering, kill):
-    min_forward = 0.3
-    max_forward = 0.3
+    steering = min(max(steering, -1), 1)
+    min_forward = 0.6
+    max_forward = min_forward
 
-    max_steering = 0.5
+    max_steering = 0.6
 
     min_speed_steering = 0.3
 
@@ -152,23 +166,27 @@ def serial_io_loop(
     path_lost,
     kill,
 ):
-    target_ups = 60
-    averaging_time = 0.5
+    target_ups = 50
+    averaging_time = 0.1
+    mot_averaging_time = 0.1
     lookahead_start = 0.3
 
-    Kp = 1
-    Kd = 0
+    Kp = 3.0
+    Kd = 0.5
     Ki = 0
     pid = PID(Kp, Ki, Kd, setpoint=0, output_limits=(-1, 1))
-    motor_range = 10000
+    motor_range = 255
 
     # input averaging
     averaging_count = math.ceil(target_ups * averaging_time)
+    mot_averaging_count = math.ceil(target_ups * mot_averaging_time)
     current_avg_buf = np.zeros(averaging_count)
     future_avg_buf = np.zeros(averaging_count)
+    left_avg_buf = np.zeros(mot_averaging_count)
+    right_avg_buf = np.zeros(mot_averaging_count)
 
     # average weighting function
-    weights = [2 ** (x**0.7) for x in range(0, averaging_count)]
+    weights = [(((x + 1) / averaging_count) ** 2) for x in range(0, averaging_count)]
 
     while not kill.value:
         exec_start = time.monotonic()
@@ -187,9 +205,10 @@ def serial_io_loop(
         lerp_val = 2 ** (-5 * ((abs(current_avg_out) / lookahead_start) ** 2))
         lookahead_proportion.value = lerp_val
 
-        current_target_out = ((1 - lerp_val) * current_avg_out) + (
-            lerp_val * future_avg_out
-        )
+        # current_target_out = ((1 - lerp_val) * current_avg_out) + (
+        #     lerp_val * future_avg_out
+        # )
+        current_target_out = future_avg_out
         current_target.value = current_target_out
 
         pid_out = pid(current_target_out)
@@ -199,61 +218,55 @@ def serial_io_loop(
         dt = exec_end - exec_start
         left_f, right_f = steering_to_motor_vals(pid_out, path_lost.value)
         left = int(left_f * motor_range)
+
+        left = int(left_f * motor_range)
+        left_avg_buf = np.roll(left_avg_buf, -1)
+        left_avg_buf[-1] = left
+        left_avg = int(np.average(left_avg_buf))
+
         right = int(right_f * motor_range)
+        right_avg_buf = np.roll(right_avg_buf, -1)
+        right_avg_buf[-1] = right
+        right_avg = int(np.average(right_avg_buf))
+
         print(
-            f"L{left:+06d}, R{right:+06d}, C{current_avg_out:+01.3f}, F{future_avg_out:+01.3f}"
+            f"P:{pid_out:+01.3f}, L{left:+06d}, R{right:+06d}, C{current_avg_out:+01.3f}, F{future_avg_out:+01.3f}"
         )
-        time.sleep((1.0 / target_ups) - dt)
+        raw_data = struct.pack("<Bll", 0xAA, left_avg, right_avg)
+        crc = calculator.checksum(raw_data)
+        final_data = struct.pack("<BllB", 0xAA, left_avg, right_avg, crc)
+        if ser_send:
+            ser.write(final_data)
+
+        time.sleep(max((1.0 / target_ups) - dt, 0))
 
 
 if __name__ == "__main__":
     print("\r\n\r\n")
-    current_error_val = Value("d", 0)
-    future_error_val = Value("d", 0)
-    current_avg_val = Value("d", 0)
-    future_avg_val = Value("d", 0)
+    color_min_area_proportion = 0.01 * 0.1
+    no_col_detect_error = 0.05
+    future_path_height = 0.35
+    show = True
 
-    current_target_val = Value("d", 0)
-    current_pid_val = Value("d", 0)
-    lookahead_proportion_val = Value("d", 0)
-    path_lost_val = Value("i", 0)
-    left_val = Value("i", 0)
-    right_val = Value("i", 0)
-    serial_should_stop = Value("i", 0)
-
-    serial_io_thread = Process(
-        target=serial_io_loop,
-        args=(
-            current_error_val,
-            future_error_val,
-            current_avg_val,
-            future_avg_val,
-            current_target_val,
-            current_pid_val,
-            lookahead_proportion_val,
-            path_lost_val,
-            serial_should_stop,
-        ),
-    )
-    serial_io_thread.start()
     # DEBUGGING + DISPLAY
     current_display_mode = DisplayMode.RGB
+    robot_stop = remote_display
 
     mouse_x = 0
     mouse_y = 0
 
     # THRESHOLDING
-    blu_hsv = (150, 220, 170)
-    ylw_hsv = (35, 110, 180)
-    mgnta_hsv = (0, 0, 0)
+    blu_hsv = (150, 150, 200)
+    ylw_hsv = (40, 80, 200)
+    mgnta_hsv = (230, 130, 70)
     red_hsv = (0, 0, 0)
 
-    blu_hsv_thresh_range = (20, 50, 100)
-    ylw_hsv_thresh_range = (20, 50, 70)
-    mgnta_hsv_thresh_range = (0, 0, 0)
+    blu_hsv_thresh_range = (20, 60, 60)
+    ylw_hsv_thresh_range = (20, 30, 60)
+    mgnta_hsv_thresh_range = (40, 60, 50)
     red_hsv_thresh_range = (0, 0, 0)
 
-    col_denoise_kernel_rad = 4
+    col_denoise_kernel_rad = 2
     edge_fill_height = 0.25
 
     # DENOISING/CLEANDING KERNELS
@@ -274,15 +287,10 @@ if __name__ == "__main__":
     initial_blur_size = 31
 
     # more image proportions
-    # if absolute error is les
-    path_error_switch_start = 0.5
 
     # filtering/slicing image proportions
     horizontal_cutoff_dist = 0.5
-    future_path_height = 0.35
     path_min_area_proportion = 0.01 * 0.1
-    color_min_area_proportion = 0.1 * 0.1
-    no_col_detect_error = 0.3
 
     # robot config parameters
     path_failsafe_time = 0.3
@@ -293,6 +301,37 @@ if __name__ == "__main__":
     if not cap.isOpened():
         print("Cannot open camera")
         exit()
+
+    current_error_val = Value("d", 0)
+    future_error_val = Value("d", 0)
+    current_avg_val = Value("d", 0)
+    future_avg_val = Value("d", 0)
+
+    current_target_val = Value("d", 0)
+    current_pid_val = Value("d", 0)
+    lookahead_proportion_val = Value("d", 0)
+    path_lost_val = Value("i", 0)
+    left_val = Value("i", 0)
+    right_val = Value("i", 0)
+    serial_should_stop = Value("i", 0)
+    program_start = time.monotonic()
+    path_lost_val.value = True
+
+    serial_io_thread = Process(
+        target=serial_io_loop,
+        args=(
+            current_error_val,
+            future_error_val,
+            current_avg_val,
+            future_avg_val,
+            current_target_val,
+            current_pid_val,
+            lookahead_proportion_val,
+            path_lost_val,
+            serial_should_stop,
+        ),
+    )
+    serial_io_thread.start()
 
     # picIn = cv.imread("test4.png")  # TODO TESTING ONLY
     _, picIn = cap.read()
@@ -383,7 +422,9 @@ if __name__ == "__main__":
     while True:
         key = cv.waitKey(1)
         process_key(key)
-        if key == ord("q"):
+        if key == ord("-"):
+            break
+        if time.monotonic() - program_start > 10 and not remote_display:
             break
 
         start_time = time.monotonic()
@@ -400,20 +441,21 @@ if __name__ == "__main__":
         # )
         # scale image down to reduce processing time at the cost of error resolution
         input_frame = cv.resize(input_frame, (cols, rows))
+        input_frame = cv.flip(input_frame, -1)
 
         hsvImg = cv.cvtColor(input_frame, cv.COLOR_BGR2HSV_FULL)
 
         # calculate thresholded masks for various colors
         blu_mask = cv.inRange(hsvImg, blu_hsv_low, blu_hsv_high)
         blu_detected = cv.countNonZero(blu_mask) > color_min_area
-        blu_mask[rows - edge_fill_height_px : rows, 0 : col_denoise_kernel_rad + 1] = (
-            255
-        )
-        ylw_mask = cv.inRange(hsvImg, ylw_hsv_low, ylw_hsv_high)
-        ylw_detected = cv.countNonZero(ylw_mask) > color_min_area
-        ylw_mask[
+        blu_mask[
             rows - edge_fill_height_px : rows, cols - col_denoise_kernel_rad - 1 : cols
         ] = 255
+        ylw_mask = cv.inRange(hsvImg, ylw_hsv_low, ylw_hsv_high)
+        ylw_detected = cv.countNonZero(ylw_mask) > color_min_area
+        ylw_mask[rows - edge_fill_height_px : rows, 0 : col_denoise_kernel_rad + 1] = (
+            255
+        )
         mgnta_mask = cv.inRange(hsvImg, mgnta_hsv_low, mgnta_hsv_high)
         # combine the masks
         track_boundaries_mask = cv.bitwise_xor(ylw_mask, blu_mask)
@@ -436,7 +478,7 @@ if __name__ == "__main__":
         )
         # laplacian is just horiz + vertical 2nd order sobel added together
         # allows it to handle sharp corners or U-turns better
-        raw_derivative = (raw_horz_derivative * 1.1) + (raw_vert_derivative * 1)
+        raw_derivative = (raw_horz_derivative * 1.1) + (raw_vert_derivative * 0.5)
         # raw_derivative = cv.Laplacian(
         #     distance_plot, cv.CV_32F, ksize=derivative_kernel_size
         # )
@@ -700,13 +742,15 @@ if __name__ == "__main__":
                 display_frame = input_frame
 
         current_path_error_px = current_path_x - setpoint_px
-        future_path_error_px = future_path_x - current_path_x
+        future_path_error_px = future_path_x - setpoint_px
         if not blu_detected:
             current_path_error_px = current_path_error_px + no_col_detect_error_px
+            future_path_error_px = future_path_error_px + no_col_detect_error_px
         if not ylw_detected:
             current_path_error_px = current_path_error_px - no_col_detect_error_px
+            future_path_error_px = future_path_error_px - no_col_detect_error_px
 
-        path_lost_val.value = path_lost
+        path_lost_val.value = path_lost or robot_stop
         current_error_val.value = current_path_error_px / (cols / 2)
         future_error_val.value = future_path_error_px / (cols / 2)
 
@@ -775,6 +819,15 @@ if __name__ == "__main__":
             (current_target, 0),
             (current_target, rows),
             (255, 255, 0),
+            2,
+        )
+
+        current_pid_px = int(current_pid_val.value * cols + cols / 2)
+        cv.line(
+            display_frame,
+            (current_pid_px, 0),
+            (current_pid_px, rows),
+            (0, 255, 255),
             2,
         )
         # steering outputs
@@ -945,9 +998,11 @@ if __name__ == "__main__":
         # display_frame = cv.resize(
         #     display_frame, (int(cols * display_scale), int(rows * display_scale))
         # )
-        cv.imshow(window_title, display_frame)
+        if show:
+            cv.imshow(window_title, display_frame)
 
     serial_should_stop.value = 1
     cv.destroyAllWindows()
     cap.release()
     serial_io_thread.join()
+    ser.close()
